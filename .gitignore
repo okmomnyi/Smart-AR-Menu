@@ -1,0 +1,55 @@
+# ── Dependencies ─────────────────────────────────────────────────────────────
+node_modules/
+**/node_modules/
+
+# ── Build outputs ─────────────────────────────────────────────────────────────
+dist/
+build/
+.next/
+out/
+
+# ── Environment & secrets ─────────────────────────────────────────────────────
+.env
+.env.local
+.env.*.local
+.env.production
+.env.staging
+# Allow example/template files
+!.env.example
+!.env.docker
+
+# ── Logs ─────────────────────────────────────────────────────────────────────
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ── OS / Editor ───────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.idea/
+
+# ── Prisma ────────────────────────────────────────────────────────────────────
+prisma/migrations/dev.db
+prisma/*.db
+
+# ── Docker volumes ────────────────────────────────────────────────────────────
+postgres_data/
+
+# ── Certificates & keys ───────────────────────────────────────────────────────
+*.pem
+*.key
+*.cert
+
+# ── Claude AI ─────────────────────────────────────────────────────────────────
+.claude/
+
+# ── Public / uploaded assets ──────────────────────────────────────────────────
+**/public/
+
+# ── Additional env files ──────────────────────────────────────────────────────
+.env.development
+.env.test

@@ -1,0 +1,58 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Restaurant {
+  id          String     @id @default(uuid())
+  name        String
+  slug        String     @unique
+  logo_url    String?
+  theme_color String     @default("#D4820A")
+  active      Boolean    @default(true)
+  created_at  DateTime   @default(now())
+  products    Product[]
+  categories  Category[]
+  users       User[]
+}
+
+model Product {
+  id            String     @id @default(uuid())
+  restaurant_id String
+  restaurant    Restaurant @relation(fields: [restaurant_id], references: [id])
+  name          String
+  description   String?
+  category_id   String?
+  category      Category?  @relation(fields: [category_id], references: [id])
+  model_url     String?
+  image_url     String?
+  diameter_cm   Float?
+  height_cm     Float?
+  sizes         Json
+  prices        Json
+  active        Boolean    @default(true)
+  created_at    DateTime   @default(now())
+}
+
+model Category {
+  id            String     @id @default(uuid())
+  restaurant_id String
+  restaurant    Restaurant @relation(fields: [restaurant_id], references: [id])
+  name          String
+  order         Int        @default(0)
+  products      Product[]
+}
+
+model User {
+  id            String     @id @default(uuid())
+  firebase_uid  String     @unique
+  email         String     @unique
+  restaurant_id String
+  restaurant    Restaurant @relation(fields: [restaurant_id], references: [id])
+  role          String     @default("admin")
+  created_at    DateTime   @default(now())
+}

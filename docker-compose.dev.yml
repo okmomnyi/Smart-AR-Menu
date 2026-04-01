@@ -1,0 +1,32 @@
+version: '3.9'
+
+# Development compose — spins up only PostgreSQL so you can run
+# backend and frontend locally with `npm run dev`.
+#
+# Usage:
+#   docker compose -f docker-compose.dev.yml up -d
+#   cd backend && npm run dev
+#   cd frontend && npm run dev
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: ar_menu_postgres_dev
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ar_menu
+      POSTGRES_PASSWORD: ar_menu_secret
+      POSTGRES_DB: ar_menu
+    ports:
+      - '5434:5432'
+    volumes:
+      - postgres_dev_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ar_menu -d ar_menu']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  postgres_dev_data:
+    driver: local
