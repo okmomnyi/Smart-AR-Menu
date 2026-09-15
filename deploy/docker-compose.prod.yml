@@ -21,12 +21,18 @@ x-limits: &limits
       max-file: '3'
 
 services:
+  # Optional. Production uses Neon (DATABASE_URL in .env). To run the database
+  # on this server instead, remove the two database URLs from .env and set
+  # COMPOSE_PROFILES=local-db there.
   postgres:
     <<: *limits
+    profiles: [local-db]
     image: postgres:16-alpine
     container_name: ar_menu_postgres
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-ar_menu}
+      # Kept required even when the local-db profile is off, so turning it on
+      # can never start a database with a guessable password.
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
       POSTGRES_DB: ${POSTGRES_DB:-ar_menu}
     volumes:
@@ -46,11 +52,16 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+        # Only waited on when the local-db profile is active.
+        required: false
     environment:
       NODE_ENV: production
       PORT: 4000
-      DATABASE_URL: postgresql://${POSTGRES_USER:-ar_menu}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-ar_menu}
-      DIRECT_DATABASE_URL: postgresql://${POSTGRES_USER:-ar_menu}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-ar_menu}
+      # Neon: the pooled endpoint serves the app; migrations need the direct
+      # endpoint (same host without -pooler). Both fall back to the local
+      # container when unset.
+      DATABASE_URL: ${DATABASE_URL:-postgresql://${POSTGRES_USER:-ar_menu}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-ar_menu}}
+      DIRECT_DATABASE_URL: ${DIRECT_DATABASE_URL:-postgresql://${POSTGRES_USER:-ar_menu}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-ar_menu}}
       FRONTEND_URL: https://${APP_HOST:?set APP_HOST in .env}
       API_PATH_PREFIX: /api
       # cloudflared is the one hop in front of the API.
