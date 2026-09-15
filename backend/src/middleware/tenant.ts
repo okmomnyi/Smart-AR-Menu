@@ -1,29 +1,22 @@
 import { Request, Response, NextFunction } from 'express'
-import { prisma } from '../lib/prisma'
+import { forbidden, unauthorized } from '../lib/http-error'
 
-export function verifyTenant(paramName: string) {
-  return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+/**
+ * Enforces that the :id in the route is the caller's own restaurant.
+ *
+ * The restaurant id comes from the signed access token, so this no longer
+ * needs a database lookup on every request the way the Firebase version did.
+ */
+export function requireTenant(paramName = 'id') {
+  return (req: Request, _res: Response, next: NextFunction): void => {
     if (!req.user) {
-      res.status(401).json({ error: 'Not authenticated' })
+      next(unauthorized())
       return
     }
-
-    const user = await prisma.user.findUnique({
-      where: { firebase_uid: req.user.uid },
-    })
-
-    if (!user) {
-      res.status(404).json({ error: 'User not found. Please register first.' })
+    if (req.params[paramName] !== req.user.restaurantId) {
+      next(forbidden('Access denied to this restaurant'))
       return
     }
-
-    const requestedRestaurantId = req.params[paramName]
-    if (user.restaurant_id !== requestedRestaurantId) {
-      res.status(403).json({ error: 'Access denied to this restaurant' })
-      return
-    }
-
-    req.restaurant = { id: user.restaurant_id, role: user.role }
     next()
   }
 }

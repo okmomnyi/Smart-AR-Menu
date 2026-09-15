@@ -1,166 +1,193 @@
 'use client'
 
-import React, { useState } from 'react'
+import React, { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
+import {
+  LayoutDashboard,
+  UtensilsCrossed,
+  ListOrdered,
+  Palette,
+  LogOut,
+  Menu as MenuIcon,
+  X,
+  ExternalLink,
+} from 'lucide-react'
 import { useAuth } from '../lib/auth'
+import BrandMark from './BrandMark'
+import ThemeToggle from './ThemeToggle'
+
+// Matches Tailwind's lg breakpoint, where the sidebar stops being a drawer.
+const DESKTOP_QUERY = '(min-width: 1024px)'
+
+function subscribeDesktop(onChange: () => void) {
+  const media = window.matchMedia(DESKTOP_QUERY)
+  media.addEventListener('change', onChange)
+  return () => media.removeEventListener('change', onChange)
+}
+
+const NAV = [
+  { href: '/admin/dashboard', label: 'Dashboard', Icon: LayoutDashboard },
+  { href: '/admin/products', label: 'Products', Icon: UtensilsCrossed },
+  { href: '/admin/categories', label: 'Categories', Icon: ListOrdered },
+  { href: '/admin/branding', label: 'Branding', Icon: Palette },
+]
 
 interface AdminLayoutProps {
   children: React.ReactNode
-  title?: string
+  title: string
 }
-
-const navLinks = [
-  {
-    href: '/admin/dashboard',
-    label: 'Dashboard',
-    icon: (
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <rect x="3" y="3" width="7" height="7" /><rect x="14" y="3" width="7" height="7" />
-        <rect x="14" y="14" width="7" height="7" /><rect x="3" y="14" width="7" height="7" />
-      </svg>
-    ),
-  },
-  {
-    href: '/admin/products',
-    label: 'Products',
-    icon: (
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <circle cx="12" cy="12" r="10" /><path d="M8 12h8M12 8v8" />
-      </svg>
-    ),
-  },
-  {
-    href: '/admin/categories',
-    label: 'Categories',
-    icon: (
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <line x1="8" y1="6" x2="21" y2="6" /><line x1="8" y1="12" x2="21" y2="12" />
-        <line x1="8" y1="18" x2="21" y2="18" /><line x1="3" y1="6" x2="3.01" y2="6" />
-        <line x1="3" y1="12" x2="3.01" y2="12" /><line x1="3" y1="18" x2="3.01" y2="18" />
-      </svg>
-    ),
-  },
-  {
-    href: '/admin/branding',
-    label: 'Branding',
-    icon: (
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <circle cx="12" cy="12" r="3" /><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42" />
-      </svg>
-    ),
-  },
-]
 
 export default function AdminLayout({ children, title }: AdminLayoutProps) {
   const pathname = usePathname()
-  const { signOut, userRecord } = useAuth()
+  const { signOut, restaurant } = useAuth()
   const [mobileOpen, setMobileOpen] = useState(false)
+  const [signingOut, setSigningOut] = useState(false)
+  const openButtonRef = useRef<HTMLButtonElement>(null)
+  const closeButtonRef = useRef<HTMLButtonElement>(null)
+  const isDesktop = useSyncExternalStore(
+    subscribeDesktop,
+    () => window.matchMedia(DESKTOP_QUERY).matches,
+    () => true
+  )
 
-  const restaurantName = userRecord?.restaurant?.name ?? 'AR Menu'
+  // A closed drawer is only moved off-screen, so its links stayed in the tab
+  // order: keyboard users tabbed into navigation they could not see. inert
+  // removes it from focus and the accessibility tree until it is opened.
+  const drawerHidden = !isDesktop && !mobileOpen
+
+  function closeDrawer() {
+    setMobileOpen(false)
+    openButtonRef.current?.focus()
+  }
+
+  useEffect(() => {
+    if (!mobileOpen) return
+    closeButtonRef.current?.focus()
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') closeDrawer()
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => document.removeEventListener('keydown', onKeyDown)
+  }, [mobileOpen])
+
+  const menuUrl = restaurant
+    ? `${process.env.NEXT_PUBLIC_APP_URL ?? ''}/r/${restaurant.slug}`
+    : null
+
+  async function handleSignOut() {
+    setSigningOut(true)
+    try {
+      await signOut()
+    } finally {
+      setSigningOut(false)
+    }
+  }
 
   return (
-    <div className="flex min-h-screen" style={{ background: '#F4F1ED' }}>
-      {/* Mobile overlay */}
+    <div className="flex min-h-screen bg-surface">
       {mobileOpen && (
-        <div
+        <button
+          type="button"
           className="fixed inset-0 z-20 bg-black/50 lg:hidden"
-          onClick={() => setMobileOpen(false)}
+          onClick={closeDrawer}
+          tabIndex={-1}
+          aria-label="Close navigation"
         />
       )}
 
-      {/* Sidebar */}
       <aside
-        className={`fixed inset-y-0 left-0 z-30 w-64 flex flex-col transition-transform duration-300 lg:translate-x-0 lg:static lg:z-auto ${
+        id="admin-nav"
+        inert={drawerHidden}
+        className={`print:hidden fixed inset-y-0 left-0 z-30 flex w-64 flex-col bg-menu-bg transition-transform duration-300 lg:static lg:z-auto lg:translate-x-0 ${
           mobileOpen ? 'translate-x-0' : '-translate-x-full'
         }`}
-        style={{ background: '#1A1814' }}
       >
-        {/* Brand */}
-        <div className="px-6 py-6 border-b" style={{ borderColor: 'rgba(255,255,255,0.08)' }}>
-          <div className="flex items-center gap-3">
-            <div
-              className="w-8 h-8 rounded-lg flex items-center justify-center text-white font-bold text-sm"
-              style={{ background: 'linear-gradient(135deg, #D4820A, #F0A830)' }}
-            >
-              AR
-            </div>
-            <div>
-              <p className="text-white font-semibold text-sm" style={{ fontFamily: 'Playfair Display, serif' }}>
-                {restaurantName}
-              </p>
-              <p className="text-xs" style={{ color: '#8A7D70' }}>Admin Panel</p>
-            </div>
+        <div className="on-dark flex items-center gap-3 border-b border-menu-border px-5 py-5">
+          <BrandMark size={34} />
+          <div className="min-w-0 flex-1">
+            <p className="truncate font-display text-sm font-bold text-menu-ink">
+              {restaurant?.name ?? 'AR Menu'}
+            </p>
+            <p className="text-xs text-menu-ink-muted">Admin panel</p>
           </div>
+          <button
+            ref={closeButtonRef}
+            type="button"
+            className="rounded-md p-1 text-menu-ink-muted hover:text-menu-ink lg:hidden"
+            onClick={closeDrawer}
+            aria-label="Close navigation"
+          >
+            <X size={18} aria-hidden="true" />
+          </button>
         </div>
 
-        {/* Nav */}
-        <nav className="flex-1 px-3 py-4 space-y-1">
-          {navLinks.map((link) => {
-            const active = pathname === link.href || pathname.startsWith(link.href + '/')
+        <nav className="on-dark flex-1 space-y-1 px-3 py-4" aria-label="Admin sections">
+          {NAV.map(({ href, label, Icon }) => {
+            const active = pathname === href || pathname.startsWith(`${href}/`)
             return (
               <Link
-                key={link.href}
-                href={link.href}
+                key={href}
+                href={href}
                 onClick={() => setMobileOpen(false)}
-                className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors"
-                style={{
-                  fontFamily: 'DM Sans, sans-serif',
-                  color: active ? '#FFD580' : '#8A7D70',
-                  background: active ? 'rgba(212,130,10,0.15)' : 'transparent',
-                }}
+                aria-current={active ? 'page' : undefined}
+                className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${
+                  active
+                    ? 'bg-accent-wash text-accent'
+                    : 'text-menu-ink-muted hover:bg-white/5 hover:text-menu-ink'
+                }`}
               >
-                <span style={{ color: active ? '#D4820A' : '#8A7D70' }}>{link.icon}</span>
-                {link.label}
+                <Icon size={18} aria-hidden="true" />
+                {label}
               </Link>
             )
           })}
         </nav>
 
-        {/* Sign out */}
-        <div className="px-3 py-4 border-t" style={{ borderColor: 'rgba(255,255,255,0.08)' }}>
+        <div className="on-dark space-y-1 border-t border-menu-border px-3 py-4">
+          {menuUrl && (
+            <a
+              href={menuUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm text-menu-ink-muted transition-colors hover:bg-white/5 hover:text-menu-ink"
+            >
+              <ExternalLink size={18} aria-hidden="true" />
+              View live menu
+            </a>
+          )}
           <button
-            onClick={signOut}
-            className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm w-full transition-colors hover:bg-white/5"
-            style={{ color: '#8A7D70', fontFamily: 'DM Sans, sans-serif' }}
+            type="button"
+            onClick={handleSignOut}
+            disabled={signingOut}
+            className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm text-menu-ink-muted transition-colors hover:bg-white/5 hover:text-menu-ink disabled:opacity-60"
           >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
-              <polyline points="16 17 21 12 16 7" /><line x1="21" y1="12" x2="9" y2="12" />
-            </svg>
-            Sign Out
+            <LogOut size={18} aria-hidden="true" />
+            {signingOut ? 'Signing out…' : 'Sign out'}
           </button>
         </div>
       </aside>
 
-      {/* Main */}
-      <div className="flex-1 flex flex-col min-w-0">
-        {/* Top bar */}
-        <header
-          className="sticky top-0 z-10 px-6 py-4 flex items-center gap-4 border-b"
-          style={{ background: '#F4F1ED', borderColor: 'rgba(61,43,31,0.12)' }}
-        >
+      <div className="flex min-w-0 flex-1 flex-col">
+        <header className="sticky top-0 z-10 flex items-center gap-3 border-b border-line bg-surface px-4 py-4 print:hidden sm:px-6">
           <button
-            className="lg:hidden p-1.5 rounded-lg"
-            style={{ color: '#3D2B1F' }}
+            ref={openButtonRef}
+            type="button"
+            className="rounded-md p-1.5 text-ink hover:bg-surface-sunken lg:hidden"
             onClick={() => setMobileOpen(true)}
+            aria-label="Open navigation"
+            aria-expanded={mobileOpen}
+            aria-controls="admin-nav"
           >
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <line x1="3" y1="6" x2="21" y2="6" /><line x1="3" y1="12" x2="21" y2="12" /><line x1="3" y1="18" x2="21" y2="18" />
-            </svg>
+            <MenuIcon size={20} aria-hidden="true" />
           </button>
-          {title && (
-            <h1
-              className="text-xl font-bold"
-              style={{ fontFamily: 'Playfair Display, serif', color: '#1A1814' }}
-            >
-              {title}
-            </h1>
-          )}
+          <h1 className="min-w-0 flex-1 truncate font-display text-xl font-bold text-ink">{title}</h1>
+          <ThemeToggle />
         </header>
 
-        {/* Content */}
-        <main className="flex-1 p-6">{children}</main>
+        <main id="main" tabIndex={-1} className="flex-1 p-4 sm:p-6">
+          {children}
+        </main>
       </div>
     </div>
   )

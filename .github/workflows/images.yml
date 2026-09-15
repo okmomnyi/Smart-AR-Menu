@@ -1,0 +1,98 @@
+name: Container images
+
+# Builds the arm64 images the production server pulls. The server itself never
+# builds: it is a small shared instance, and a Next.js build would starve the
+# other services running on it.
+
+on:
+  push:
+    branches: [main, 'deploy/**']
+    paths:
+      - 'backend/**'
+      - 'frontend/**'
+      - '.github/workflows/images.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: images-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            backend/package-lock.json
+            frontend/package-lock.json
+
+      - name: Backend typecheck and auth tests
+        working-directory: backend
+        run: |
+          npm ci
+          npx prisma generate
+          npx tsc --noEmit
+          npm run build
+          npm run verify:auth
+
+      - name: Frontend typecheck and lint
+        working-directory: frontend
+        run: |
+          npm ci --ignore-scripts
+          npx tsc --noEmit
+          npx eslint .
+
+  build:
+    needs: verify
+    # Native arm64 runner: emulating arm64 on x86 makes the Next.js build
+    # several times slower.
+    runs-on: ubuntu-24.04-arm
+    strategy:
+      fail-fast: true
+      matrix:
+        service: [backend, frontend]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Image tags
+        id: tags
+        run: |
+          image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/ar-menu-${{ matrix.service }}"
+          tags="${image}:sha-${GITHUB_SHA}"
+          # latest only moves when main moves, so a deploy branch cannot
+          # replace what production pulls by default.
+          if [ "${GITHUB_REF}" = "refs/heads/main" ]; then tags="${tags},${image}:latest"; fi
+          echo "tags=${tags}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.service }}
+          platforms: linux/arm64
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          labels: org.opencontainers.image.source=https://github.com/${{ github.repository }}
+          # Only the frontend reads these. NEXT_PUBLIC_* values are compiled
+          # into the browser bundle, so they are fixed per image.
+          build-args: |
+            NEXT_PUBLIC_API_URL=${{ vars.NEXT_PUBLIC_API_URL || 'https://menu.kelvinmomanyi.me/api' }}
+            NEXT_PUBLIC_APP_URL=${{ vars.NEXT_PUBLIC_APP_URL || 'https://menu.kelvinmomanyi.me' }}
+            NEXT_PUBLIC_MEDIA_HOSTNAME=${{ vars.NEXT_PUBLIC_MEDIA_HOSTNAME || '' }}
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}

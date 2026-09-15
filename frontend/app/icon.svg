@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="AR Menu">
+  <rect width="32" height="32" rx="7" fill="#0E0C0A"/>
+  <!-- plate seen at an angle: the AR viewer's core idea, a dish on a surface -->
+  <ellipse cx="16" cy="19.5" rx="10" ry="4.5" fill="none" stroke="#D4820A" stroke-width="2"/>
+  <circle cx="16" cy="13" r="5" fill="#D4820A"/>
+</svg>

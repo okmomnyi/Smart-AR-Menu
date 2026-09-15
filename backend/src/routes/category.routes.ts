@@ -1,13 +1,23 @@
 import { Router } from 'express'
-import { verifyToken } from '../middleware/auth'
-import { verifyTenant } from '../middleware/tenant'
-import { getAll, create, update, remove } from '../controllers/category.controller'
+import { asyncHandler } from '../lib/async'
+import { requireAuth } from '../middleware/auth'
+import { requireTenant } from '../middleware/tenant'
+import {
+  getAll,
+  create,
+  update,
+  reorder,
+  remove,
+} from '../controllers/category.controller'
 
 const router = Router({ mergeParams: true })
 
-router.get('/', verifyToken, verifyTenant('id'), getAll)
-router.post('/', verifyToken, verifyTenant('id'), create)
-router.patch('/:cid', verifyToken, verifyTenant('id'), update)
-router.delete('/:cid', verifyToken, verifyTenant('id'), remove)
+router.use(requireAuth, requireTenant('id'))
+
+router.get('/', asyncHandler(getAll))
+router.post('/', asyncHandler(create))
+router.put('/order', asyncHandler(reorder))
+router.patch('/:cid', asyncHandler(update))
+router.delete('/:cid', asyncHandler(remove))
 
 export default router

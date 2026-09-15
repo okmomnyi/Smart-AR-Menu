@@ -1,15 +1,18 @@
 'use client'
 
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useCallback, useEffect, useId, useRef, useState } from 'react'
 import Image from 'next/image'
-import type { Product, Category, SizeEntry, ProductFormData } from '../lib/api'
+import { X, Plus, Trash2, Upload, Check, AlertCircle } from 'lucide-react'
 import {
   createProduct,
   updateProduct,
   uploadImage,
   uploadModel,
+  type Product,
+  type Category,
+  type SizeEntry,
+  type ProductFormData,
 } from '../lib/api'
-import { useAuth } from '../lib/auth'
 
 interface ProductSlideOverProps {
   open: boolean
@@ -17,331 +20,343 @@ interface ProductSlideOverProps {
   product?: Product | null
   categories: Category[]
   restaurantId: string
-  onSaved: () => void
+  onSaved: () => void | Promise<void>
 }
 
 const emptySize = (): SizeEntry => ({ label: '', cm: 0, price: 0 })
 
-export default function ProductSlideOver({
-  open,
+/**
+ * Mounts the form only while the panel is open, keyed by the product being
+ * edited. Remounting is what resets the fields, so the form can initialise
+ * its state straight from props instead of copying props into state inside an
+ * effect — which was both a cascading-render hazard and 35 lines of
+ * hand-written reset logic that had to be kept in sync with the field list.
+ */
+export default function ProductSlideOver(props: ProductSlideOverProps) {
+  if (!props.open) return null
+  return <ProductForm {...props} key={props.product?.id ?? 'new'} />
+}
+
+function ProductForm({
   onClose,
   product,
   categories,
   restaurantId,
   onSaved,
 }: ProductSlideOverProps) {
-  const { getToken } = useAuth()
+  const panelRef = useRef<HTMLDivElement>(null)
+  const closeRef = useRef<HTMLButtonElement>(null)
   const imageInputRef = useRef<HTMLInputElement>(null)
   const modelInputRef = useRef<HTMLInputElement>(null)
+  const titleId = useId()
 
-  const [name, setName] = useState('')
-  const [description, setDescription] = useState('')
-  const [categoryId, setCategoryId] = useState<string>('')
-  const [sizes, setSizes] = useState<SizeEntry[]>([emptySize()])
-  const [imageUrl, setImageUrl] = useState<string>('')
-  const [modelUrl, setModelUrl] = useState<string>('')
-  const [modelFilename, setModelFilename] = useState<string>('')
-  const [diameterCm, setDiameterCm] = useState<string>('')
-  const [heightCm, setHeightCm] = useState<string>('')
-  const [active, setActive] = useState(true)
+  const [name, setName] = useState(product?.name ?? '')
+  const [description, setDescription] = useState(product?.description ?? '')
+  const [categoryId, setCategoryId] = useState(product?.category_id ?? '')
+  const [sizes, setSizes] = useState<SizeEntry[]>(
+    product?.sizes.length ? product.sizes : [emptySize()]
+  )
+  const [imageUrl, setImageUrl] = useState(product?.image_url ?? '')
+  const [modelUrl, setModelUrl] = useState(product?.model_url ?? '')
+  const [modelLabel, setModelLabel] = useState(product?.model_url ? 'Model uploaded' : '')
+  const [diameterCm, setDiameterCm] = useState(product?.diameter_cm?.toString() ?? '')
+  const [heightCm, setHeightCm] = useState(product?.height_cm?.toString() ?? '')
+  const [active, setActive] = useState(product?.active ?? true)
 
   const [saving, setSaving] = useState(false)
   const [uploadingImage, setUploadingImage] = useState(false)
   const [uploadingModel, setUploadingModel] = useState(false)
-  const [error, setError] = useState<string>('')
+  const [error, setError] = useState('')
 
-  // Populate form when editing
+  // Move focus into the panel on open so keyboard users are not left behind
+  // on the page underneath.
   useEffect(() => {
-    if (product) {
-      setName(product.name)
-      setDescription(product.description ?? '')
-      setCategoryId(product.category_id ?? '')
-      setSizes(product.sizes.length ? product.sizes : [emptySize()])
-      setImageUrl(product.image_url ?? '')
-      setModelUrl(product.model_url ?? '')
-      setModelFilename(product.model_url ? 'existing model' : '')
-      setDiameterCm(product.diameter_cm?.toString() ?? '')
-      setHeightCm(product.height_cm?.toString() ?? '')
-      setActive(product.active)
-    } else {
-      setName('')
-      setDescription('')
-      setCategoryId('')
-      setSizes([emptySize()])
-      setImageUrl('')
-      setModelUrl('')
-      setModelFilename('')
-      setDiameterCm('')
-      setHeightCm('')
-      setActive(true)
-    }
-    setError('')
-  }, [product, open])
+    closeRef.current?.focus()
+  }, [])
 
-  function updateSize(index: number, field: keyof SizeEntry, value: string | number) {
-    setSizes((prev) => {
-      const next = [...prev]
-      next[index] = { ...next[index], [field]: field === 'label' ? value : Number(value) }
-      return next
-    })
+  // Escape closes; Tab is trapped inside the panel while it is open.
+  const handleKeyDown = useCallback(
+    (event: React.KeyboardEvent) => {
+      if (event.key === 'Escape' && !saving) {
+        onClose()
+        return
+      }
+      if (event.key !== 'Tab' || !panelRef.current) return
+
+      const focusable = panelRef.current.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href]'
+      )
+      if (focusable.length === 0) return
+      const first = focusable[0]
+      const last = focusable[focusable.length - 1]
+
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault()
+        last.focus()
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault()
+        first.focus()
+      }
+    },
+    [onClose, saving]
+  )
+
+  function updateSize(index: number, field: keyof SizeEntry, value: string) {
+    setSizes((prev) =>
+      prev.map((size, i) =>
+        i === index
+          ? { ...size, [field]: field === 'label' ? value : Number(value) || 0 }
+          : size
+      )
+    )
   }
 
-  function addSize() {
-    setSizes((prev) => [...prev, emptySize()])
-  }
-
-  function removeSize(index: number) {
-    setSizes((prev) => prev.filter((_, i) => i !== index))
-  }
-
-  async function handleImageUpload(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0]
+  async function handleImageUpload(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0]
+    event.target.value = '' // allow re-picking the same file after an error
     if (!file) return
     setUploadingImage(true)
+    setError('')
     try {
-      const token = await getToken()
-      const { url } = await uploadImage(restaurantId, file, token)
+      const { url } = await uploadImage(file)
       setImageUrl(url)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Image upload failed')
+      setError(err instanceof Error ? err.message : 'That image could not be uploaded.')
     } finally {
       setUploadingImage(false)
     }
   }
 
-  async function handleModelUpload(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0]
+  async function handleModelUpload(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0]
+    event.target.value = ''
     if (!file) return
     setUploadingModel(true)
+    setError('')
     try {
-      const token = await getToken()
-      const { url } = await uploadModel(restaurantId, file, token)
+      const { url } = await uploadModel(file)
       setModelUrl(url)
-      setModelFilename(file.name)
+      setModelLabel(file.name)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Model upload failed')
+      setError(err instanceof Error ? err.message : 'That model could not be uploaded.')
     } finally {
       setUploadingModel(false)
     }
   }
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault()
+  async function handleSubmit(event: React.FormEvent) {
+    event.preventDefault()
     setError('')
 
-    if (!name.trim()) { setError('Product name is required'); return }
-    if (sizes.length === 0 || sizes.some((s) => !s.label)) {
-      setError('All sizes must have a label'); return
+    if (!name.trim()) {
+      setError('Give the product a name.')
+      return
     }
-
-    const prices: Record<string, number> = {}
-    sizes.forEach((s) => { prices[s.label] = s.price })
+    if (sizes.length === 0 || sizes.some((s) => !s.label.trim())) {
+      setError('Every size needs a label, for example “Regular” or “L”.')
+      return
+    }
+    const labels = sizes.map((s) => s.label.trim().toLowerCase())
+    if (new Set(labels).size !== labels.length) {
+      setError('Two sizes share the same label. Make each one distinct.')
+      return
+    }
+    if (sizes.some((s) => s.cm <= 0)) {
+      setError('Each size needs a real-world width in centimetres so AR can scale it correctly.')
+      return
+    }
 
     const data: ProductFormData = {
       name: name.trim(),
-      description: description.trim() || undefined,
+      description: description.trim() || null,
       category_id: categoryId || null,
       image_url: imageUrl || null,
       model_url: modelUrl || null,
-      diameter_cm: diameterCm ? parseFloat(diameterCm) : null,
-      height_cm: heightCm ? parseFloat(heightCm) : null,
-      sizes,
-      prices,
+      diameter_cm: diameterCm ? Number.parseFloat(diameterCm) : null,
+      height_cm: heightCm ? Number.parseFloat(heightCm) : null,
+      sizes: sizes.map((s) => ({ ...s, label: s.label.trim() })),
       active,
     }
 
     setSaving(true)
     try {
-      const token = await getToken()
-      if (product) {
-        await updateProduct(restaurantId, product.id, data, token)
-      } else {
-        await createProduct(restaurantId, data, token)
-      }
-      onSaved()
+      if (product) await updateProduct(restaurantId, product.id, data)
+      else await createProduct(restaurantId, data)
+      await onSaved()
       onClose()
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save product')
+      setError(err instanceof Error ? err.message : 'That product could not be saved.')
     } finally {
       setSaving(false)
     }
   }
 
-  if (!open) return null
-
-  const inputStyle: React.CSSProperties = {
-    width: '100%',
-    background: 'white',
-    border: '1px solid rgba(61,43,31,0.2)',
-    borderRadius: '0.5rem',
-    padding: '0.625rem 0.875rem',
-    fontFamily: 'DM Sans, sans-serif',
-    fontSize: '0.875rem',
-    color: '#1A1814',
-    outline: 'none',
-  }
-
-  const labelStyle: React.CSSProperties = {
-    display: 'block',
-    fontSize: '0.8125rem',
-    fontWeight: 500,
-    color: '#3D2B1F',
-    marginBottom: '0.375rem',
-    fontFamily: 'DM Sans, sans-serif',
-  }
 
   return (
-    <>
-      {/* Overlay */}
-      <div
+    <div onKeyDown={handleKeyDown}>
+      <button
+        type="button"
         className="fixed inset-0 z-40 bg-black/40 backdrop-blur-sm"
         onClick={onClose}
+        aria-label="Close panel"
+        tabIndex={-1}
       />
 
-      {/* Panel */}
       <div
-        className="fixed inset-y-0 right-0 z-50 w-full max-w-lg flex flex-col slide-in-right overflow-hidden"
-        style={{ background: '#FDFAF5', boxShadow: '-4px 0 32px rgba(0,0,0,0.2)' }}
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        className="slide-in-right fixed inset-y-0 right-0 z-50 flex w-full max-w-lg flex-col bg-surface-card shadow-panel"
       >
-        {/* Header */}
-        <div
-          className="flex items-center justify-between px-6 py-4 border-b flex-shrink-0"
-          style={{ borderColor: 'rgba(61,43,31,0.12)', background: '#F4F1ED' }}
-        >
-          <h2
-            className="text-lg font-bold"
-            style={{ fontFamily: 'Playfair Display, serif', color: '#1A1814' }}
-          >
-            {product ? 'Edit Product' : 'Add Product'}
+        <div className="flex shrink-0 items-center justify-between border-b border-line bg-surface px-6 py-4">
+          <h2 id={titleId} className="font-display text-lg font-bold text-ink">
+            {product ? 'Edit product' : 'Add product'}
           </h2>
           <button
+            ref={closeRef}
+            type="button"
             onClick={onClose}
-            className="p-1.5 rounded-lg transition-colors hover:bg-black/5"
-            style={{ color: '#8A7D70' }}
+            className="rounded-md p-1.5 text-ink-muted transition-colors hover:bg-surface-sunken hover:text-ink"
+            aria-label="Close"
           >
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
-            </svg>
+            <X size={20} aria-hidden />
           </button>
         </div>
 
-        {/* Form */}
-        <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto">
-          <div className="px-6 py-5 space-y-5">
+        <form onSubmit={handleSubmit} className="flex min-h-0 flex-1 flex-col">
+          <div className="flex-1 space-y-5 overflow-y-auto px-6 py-5">
             {error && (
-              <div
-                className="px-4 py-3 rounded-lg text-sm"
-                style={{ background: 'rgba(193,75,30,0.08)', color: '#C14B1E', fontFamily: 'DM Sans, sans-serif' }}
-              >
-                {error}
+              <div role="alert" className="alert alert-error">
+                <AlertCircle size={16} className="mt-0.5 shrink-0" aria-hidden />
+                <span>{error}</span>
               </div>
             )}
 
-            {/* Name */}
             <div>
-              <label style={labelStyle}>Name *</label>
+              <label htmlFor="product-name" className="label">
+                Name <span className="text-critical">*</span>
+              </label>
               <input
-                style={inputStyle}
+                id="product-name"
+                className="field"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                placeholder="e.g. Margherita Pizza"
+                placeholder="Margherita"
+                maxLength={120}
                 required
               />
             </div>
 
-            {/* Description */}
             <div>
-              <label style={labelStyle}>Description</label>
+              <label htmlFor="product-description" className="label">
+                Description
+              </label>
               <textarea
-                style={{ ...inputStyle, resize: 'vertical', minHeight: '80px' }}
+                id="product-description"
+                className="field min-h-20 resize-y"
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
-                placeholder="Brief description of the dish..."
+                placeholder="Fior di latte, San Marzano, basil."
+                maxLength={2000}
                 rows={3}
               />
             </div>
 
-            {/* Category */}
             <div>
-              <label style={labelStyle}>Category</label>
+              <label htmlFor="product-category" className="label">
+                Category
+              </label>
               <select
-                style={inputStyle}
+                id="product-category"
+                className="field"
                 value={categoryId}
                 onChange={(e) => setCategoryId(e.target.value)}
               >
-                <option value="">— Uncategorized —</option>
+                <option value="">Uncategorised</option>
                 {categories.map((c) => (
-                  <option key={c.id} value={c.id}>{c.name}</option>
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
                 ))}
               </select>
             </div>
 
-            {/* Sizes */}
-            <div>
-              <label style={labelStyle}>Sizes & Prices *</label>
+            <fieldset>
+              <legend className="label">
+                Sizes and prices <span className="text-critical">*</span>
+              </legend>
+              <p className="mb-2 text-xs text-ink-muted">
+                The width in centimetres is what AR uses to render the dish at life size, so
+                measure the real plate.
+              </p>
               <div className="space-y-2">
-                {sizes.map((s, i) => (
-                  <div key={i} className="flex gap-2 items-center">
+                {sizes.map((size, index) => (
+                  <div key={index} className="flex items-center gap-2">
                     <input
-                      style={{ ...inputStyle, flex: '1' }}
-                      placeholder="Label (S/M/L)"
-                      value={s.label}
-                      onChange={(e) => updateSize(i, 'label', e.target.value)}
+                      className="field flex-1"
+                      placeholder="Label"
+                      aria-label={`Size ${index + 1} label`}
+                      value={size.label}
+                      maxLength={24}
+                      onChange={(e) => updateSize(index, 'label', e.target.value)}
                     />
                     <input
-                      style={{ ...inputStyle, flex: '1' }}
+                      className="field w-24"
                       type="number"
+                      inputMode="decimal"
                       placeholder="cm"
-                      value={s.cm || ''}
-                      min="0"
+                      aria-label={`Size ${index + 1} width in centimetres`}
+                      value={size.cm || ''}
+                      min="0.1"
                       step="0.1"
-                      onChange={(e) => updateSize(i, 'cm', e.target.value)}
+                      onChange={(e) => updateSize(index, 'cm', e.target.value)}
                     />
                     <input
-                      style={{ ...inputStyle, flex: '1' }}
+                      className="field w-24"
                       type="number"
-                      placeholder="$"
-                      value={s.price || ''}
+                      inputMode="decimal"
+                      placeholder="Price"
+                      aria-label={`Size ${index + 1} price`}
+                      value={size.price || ''}
                       min="0"
                       step="0.01"
-                      onChange={(e) => updateSize(i, 'price', e.target.value)}
+                      onChange={(e) => updateSize(index, 'price', e.target.value)}
                     />
                     {sizes.length > 1 && (
                       <button
                         type="button"
-                        onClick={() => removeSize(i)}
-                        className="flex-shrink-0 p-1.5 rounded-lg"
-                        style={{ color: '#C14B1E' }}
+                        onClick={() => setSizes((prev) => prev.filter((_, i) => i !== index))}
+                        className="shrink-0 rounded-md p-2 text-critical transition-colors hover:bg-critical-wash"
+                        aria-label={`Remove size ${index + 1}`}
                       >
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                          <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
-                        </svg>
+                        <Trash2 size={16} aria-hidden />
                       </button>
                     )}
                   </div>
                 ))}
-                <button
-                  type="button"
-                  onClick={addSize}
-                  className="text-sm font-medium flex items-center gap-1.5 transition-opacity hover:opacity-70"
-                  style={{ color: '#D4820A', fontFamily: 'DM Sans, sans-serif' }}
-                >
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                    <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
-                  </svg>
-                  Add Size
-                </button>
               </div>
-            </div>
+              <button
+                type="button"
+                onClick={() => setSizes((prev) => [...prev, emptySize()])}
+                className="mt-2 inline-flex items-center gap-1.5 rounded-md text-sm font-medium text-accent-deep"
+              >
+                <Plus size={14} aria-hidden />
+                Add another size
+              </button>
+            </fieldset>
 
-            {/* Dimensions */}
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label style={labelStyle}>Diameter (cm)</label>
+                <label htmlFor="product-diameter" className="label">
+                  Plate diameter (cm)
+                </label>
                 <input
-                  style={inputStyle}
+                  id="product-diameter"
+                  className="field"
                   type="number"
-                  placeholder="e.g. 28"
+                  inputMode="decimal"
+                  placeholder="28"
                   value={diameterCm}
                   min="0"
                   step="0.1"
@@ -349,11 +364,15 @@ export default function ProductSlideOver({
                 />
               </div>
               <div>
-                <label style={labelStyle}>Height (cm)</label>
+                <label htmlFor="product-height" className="label">
+                  Height (cm)
+                </label>
                 <input
-                  style={inputStyle}
+                  id="product-height"
+                  className="field"
                   type="number"
-                  placeholder="e.g. 5"
+                  inputMode="decimal"
+                  placeholder="5"
                   value={heightCm}
                   min="0"
                   step="0.1"
@@ -362,124 +381,137 @@ export default function ProductSlideOver({
               </div>
             </div>
 
-            {/* Image upload */}
             <div>
-              <label style={labelStyle}>Product Image</label>
+              <span className="label">Photo</span>
               <input
                 ref={imageInputRef}
                 type="file"
                 accept=".jpg,.jpeg,.png,.webp"
-                className="hidden"
+                className="sr-only"
                 onChange={handleImageUpload}
               />
-              <div className="flex gap-3 items-center">
+              <div className="flex items-center gap-3">
                 <button
                   type="button"
                   onClick={() => imageInputRef.current?.click()}
                   disabled={uploadingImage}
-                  className="px-4 py-2 rounded-lg text-sm font-medium border transition-colors"
-                  style={{
-                    fontFamily: 'DM Sans, sans-serif',
-                    borderColor: 'rgba(61,43,31,0.2)',
-                    color: '#3D2B1F',
-                    background: 'white',
-                  }}
+                  className="btn btn-secondary"
                 >
-                  {uploadingImage ? 'Uploading…' : 'Upload Image'}
+                  {uploadingImage ? (
+                    <>
+                      <span className="spinner" style={{ width: 16, height: 16 }} aria-hidden />
+                      Uploading…
+                    </>
+                  ) : (
+                    <>
+                      <Upload size={16} aria-hidden />
+                      {imageUrl ? 'Replace photo' : 'Upload photo'}
+                    </>
+                  )}
                 </button>
                 {imageUrl && (
-                  <div className="relative w-12 h-12 rounded-lg overflow-hidden">
-                    <Image src={imageUrl} alt="preview" fill className="object-cover" />
+                  <div className="relative h-12 w-12 overflow-hidden rounded-lg">
+                    <Image
+                      src={imageUrl}
+                      alt={`Current photo for ${name || 'this product'}`}
+                      fill
+                      sizes="48px"
+                      className="object-cover"
+                    />
                   </div>
                 )}
               </div>
-              <p className="text-xs mt-1" style={{ color: '#8A7D70' }}>.jpg .png .webp, max 10MB</p>
+              <p className="mt-1.5 text-xs text-ink-muted">
+                JPG, PNG or WebP, up to 10 MB. Converted to WebP on upload.
+              </p>
             </div>
 
-            {/* Model upload */}
             <div>
-              <label style={labelStyle}>3D Model (.glb)</label>
+              <span className="label">3D model</span>
               <input
                 ref={modelInputRef}
                 type="file"
                 accept=".glb"
-                className="hidden"
+                className="sr-only"
                 onChange={handleModelUpload}
               />
-              <div className="flex gap-3 items-center">
+              <div className="flex flex-wrap items-center gap-3">
                 <button
                   type="button"
                   onClick={() => modelInputRef.current?.click()}
                   disabled={uploadingModel}
-                  className="px-4 py-2 rounded-lg text-sm font-medium border transition-colors"
-                  style={{
-                    fontFamily: 'DM Sans, sans-serif',
-                    borderColor: 'rgba(61,43,31,0.2)',
-                    color: '#3D2B1F',
-                    background: 'white',
-                  }}
+                  className="btn btn-secondary"
                 >
-                  {uploadingModel ? 'Uploading…' : 'Upload .glb'}
+                  {uploadingModel ? (
+                    <>
+                      <span className="spinner" style={{ width: 16, height: 16 }} aria-hidden />
+                      Uploading…
+                    </>
+                  ) : (
+                    <>
+                      <Upload size={16} aria-hidden />
+                      {modelUrl ? 'Replace .glb' : 'Upload .glb'}
+                    </>
+                  )}
                 </button>
-                {modelFilename && (
-                  <span
-                    className="text-sm flex items-center gap-1.5"
-                    style={{ color: '#6B7C5E', fontFamily: 'DM Sans, sans-serif' }}
-                  >
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <polyline points="20 6 9 17 4 12" />
-                    </svg>
-                    {modelFilename}
+                {modelLabel && (
+                  <span className="inline-flex items-center gap-1.5 text-sm text-positive">
+                    <Check size={14} aria-hidden />
+                    {modelLabel}
                   </span>
                 )}
               </div>
-              <p className="text-xs mt-1" style={{ color: '#8A7D70' }}>.glb only, max 100MB</p>
+              <p className="mt-1.5 text-xs text-ink-muted">
+                Binary glTF (.glb), up to 40 MB. Keep it under 5 MB where you can: guests load
+                this over mobile data at the table.
+              </p>
             </div>
 
-            {/* Active toggle */}
-            <div className="flex items-center justify-between">
-              <span style={{ ...labelStyle, marginBottom: 0 }}>Active (visible to customers)</span>
+            <div className="flex items-center justify-between border-t border-line pt-4">
+              <span id="active-label" className="text-sm font-medium text-ink">
+                Show on the public menu
+              </span>
               <button
                 type="button"
+                role="switch"
+                aria-checked={active}
+                aria-labelledby="active-label"
                 onClick={() => setActive((v) => !v)}
-                className="relative w-12 h-6 rounded-full transition-colors duration-200 focus:outline-none"
-                style={{ background: active ? '#D4820A' : '#D1C5B8' }}
+                className={`relative h-6 w-11 rounded-full transition-colors ${
+                  active ? 'bg-accent-strong' : 'bg-line-strong'
+                }`}
               >
                 <span
-                  className="absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white transition-transform duration-200 shadow-sm"
-                  style={{ transform: active ? 'translateX(24px)' : 'translateX(0)' }}
+                  className="absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow-sm transition-transform"
+                  style={{ transform: active ? 'translateX(20px)' : 'translateX(0)' }}
                 />
               </button>
             </div>
           </div>
 
-          {/* Footer */}
-          <div
-            className="sticky bottom-0 px-6 py-4 border-t flex gap-3"
-            style={{ background: '#F4F1ED', borderColor: 'rgba(61,43,31,0.12)' }}
-          >
-            <button
-              type="button"
-              onClick={onClose}
-              className="flex-1 py-2.5 rounded-full text-sm font-medium border transition-colors"
-              style={{
-                fontFamily: 'DM Sans, sans-serif',
-                borderColor: 'rgba(61,43,31,0.2)',
-                color: '#3D2B1F',
-              }}
-            >
+          <div className="flex shrink-0 gap-3 border-t border-line bg-surface px-6 py-4">
+            <button type="button" onClick={onClose} className="btn btn-secondary flex-1">
               Cancel
             </button>
             <button
               type="submit"
-              disabled={saving}
-              className="flex-1 btn-amber py-2.5 text-sm"
+              disabled={saving || uploadingImage || uploadingModel}
+              className="btn btn-primary flex-1"
             >
-              {saving ? 'Saving…' : product ? 'Save Changes' : 'Add Product'}
+              {saving ? (
+                <>
+                  <span className="spinner" style={{ width: 16, height: 16 }} aria-hidden />
+                  Saving…
+                </>
+              ) : product ? (
+                'Save changes'
+              ) : (
+                'Add product'
+              )}
             </button>
           </div>
         </form>
       </div>
-    </>
+    </div>
   )
 }

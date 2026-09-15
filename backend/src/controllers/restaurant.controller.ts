@@ -1,44 +1,40 @@
 import { Request, Response } from 'express'
 import { prisma } from '../lib/prisma'
-
-export async function getBySlug(req: Request, res: Response): Promise<void> {
-  const { slug } = req.params
-
-  const restaurant = await prisma.restaurant.findUnique({
-    where: { slug },
-    include: {
-      categories: {
-        orderBy: { order: 'asc' },
-      },
-    },
-  })
-
-  if (!restaurant || !restaurant.active) {
-    res.status(404).json({ error: 'Restaurant not found' })
-    return
-  }
-
-  res.json(restaurant)
-}
+import { param } from '../lib/params'
+import { parse, restaurantUpdateSchema } from '../lib/validate'
+import { releaseAssetsByUrl } from '../lib/storage'
 
 export async function update(req: Request, res: Response): Promise<void> {
-  const { id } = req.params
-  const { name, theme_color, logo_url } = req.body
+  const id = param(req, 'id')
+  const input = parse(restaurantUpdateSchema, req.body)
 
-  const updateData: Record<string, unknown> = {}
-  if (name !== undefined) updateData.name = name
-  if (theme_color !== undefined) updateData.theme_color = theme_color
-  if (logo_url !== undefined) updateData.logo_url = logo_url
-
-  if (Object.keys(updateData).length === 0) {
-    res.status(400).json({ error: 'No valid fields to update' })
-    return
-  }
+  const existing = await prisma.restaurant.findUniqueOrThrow({
+    where: { id },
+    select: { logo_url: true },
+  })
 
   const restaurant = await prisma.restaurant.update({
     where: { id },
-    data: updateData,
+    data: input,
+    select: {
+      id: true,
+      name: true,
+      slug: true,
+      logo_url: true,
+      theme_color: true,
+      active: true,
+      storage_used: true,
+    },
   })
 
-  res.json(restaurant)
+  // Reclaim the old logo when it has been replaced or cleared.
+  if (
+    input.logo_url !== undefined &&
+    existing.logo_url &&
+    existing.logo_url !== restaurant.logo_url
+  ) {
+    await releaseAssetsByUrl(id, [existing.logo_url])
+  }
+
+  res.json({ ...restaurant, storage_used: Number(restaurant.storage_used) })
 }

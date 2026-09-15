@@ -4,7 +4,15 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
+
+  // Application traffic goes through Neon's pooled (pgbouncer) endpoint.
+  url = env("DATABASE_URL")
+
+  // Migrations cannot run through pgbouncer: Prisma Migrate needs
+  // session-level state and advisory locks that transaction pooling drops.
+  // Point this at the direct endpoint — the same Neon host with "-pooler"
+  // removed from the subdomain.
+  directUrl = env("DIRECT_DATABASE_URL")
 }
 
 model Restaurant {
@@ -14,20 +22,25 @@ model Restaurant {
   logo_url    String?
   theme_color String     @default("#D4820A")
   active      Boolean    @default(true)
+  // Total bytes currently stored in object storage for this tenant.
+  // Enforced against STORAGE_QUOTA_BYTES on every upload.
+  storage_used BigInt    @default(0)
   created_at  DateTime   @default(now())
+  updated_at  DateTime   @updatedAt
   products    Product[]
   categories  Category[]
   users       User[]
+  assets      Asset[]
 }
 
 model Product {
   id            String     @id @default(uuid())
   restaurant_id String
-  restaurant    Restaurant @relation(fields: [restaurant_id], references: [id])
+  restaurant    Restaurant @relation(fields: [restaurant_id], references: [id], onDelete: Cascade)
   name          String
   description   String?
   category_id   String?
-  category      Category?  @relation(fields: [category_id], references: [id])
+  category      Category?  @relation(fields: [category_id], references: [id], onDelete: SetNull)
   model_url     String?
   image_url     String?
   diameter_cm   Float?
@@ -36,23 +49,52 @@ model Product {
   prices        Json
   active        Boolean    @default(true)
   created_at    DateTime   @default(now())
+  updated_at    DateTime   @updatedAt
+
+  @@index([restaurant_id, active])
+  @@index([category_id])
 }
 
 model Category {
   id            String     @id @default(uuid())
   restaurant_id String
-  restaurant    Restaurant @relation(fields: [restaurant_id], references: [id])
+  restaurant    Restaurant @relation(fields: [restaurant_id], references: [id], onDelete: Cascade)
   name          String
   order         Int        @default(0)
+  created_at    DateTime   @default(now())
+  updated_at    DateTime   @updatedAt
   products      Product[]
+
+  @@index([restaurant_id, order])
 }
 
 model User {
   id            String     @id @default(uuid())
-  firebase_uid  String     @unique
   email         String     @unique
+  // scrypt hash, format: scrypt$N$r$p$<salt-b64>$<key-b64>
+  password_hash String
   restaurant_id String
-  restaurant    Restaurant @relation(fields: [restaurant_id], references: [id])
+  restaurant    Restaurant @relation(fields: [restaurant_id], references: [id], onDelete: Cascade)
   role          String     @default("admin")
+  // Bumped on logout / password change to invalidate every outstanding
+  // refresh token for this user without needing a session table.
+  token_version Int        @default(0)
+  last_login_at DateTime?
   created_at    DateTime   @default(now())
+  updated_at    DateTime   @updatedAt
+}
+
+// Tracks every object written to R2 so uploads can be quota-checked and
+// orphaned files can be reclaimed when a product is deleted.
+model Asset {
+  id            String     @id @default(uuid())
+  restaurant_id String
+  restaurant    Restaurant @relation(fields: [restaurant_id], references: [id], onDelete: Cascade)
+  key           String     @unique
+  url           String
+  kind          String     // "image" | "model"
+  bytes         Int
+  created_at    DateTime   @default(now())
+
+  @@index([restaurant_id])
 }

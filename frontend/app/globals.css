@@ -1,119 +1,353 @@
-@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;900&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,400&family=Space+Mono:wght@400;700&display=swap');
-
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-:root {
-  --cream: #F5F0E8;
-  --warm-white: #FDFAF5;
-  --charcoal: #1A1814;
-  --brown: #3D2B1F;
-  --amber: #D4820A;
-  --amber-light: #F0A830;
-  --amber-glow: #FFD580;
-  --rust: #C14B1E;
-  --sage: #6B7C5E;
-  --muted: #8A7D70;
-  --border: rgba(61, 43, 31, 0.12);
+/*
+ * Fonts are loaded through next/font in app/layout.tsx rather than an @import
+ * here: an @import blocks the first paint until Google Fonts responds, which
+ * on a phone at a restaurant table is the whole point of the page.
+ */
+
+@layer base {
+  :root {
+    /* Mirrors the Tailwind palette so a restaurant's saved theme_color can
+       override the accent at runtime on the customer menu. */
+    --accent: #d4820a;
+    --accent-on: #1a1814;
+
+    /* Admin palette, light. Channels without rgb() so Tailwind opacity
+       modifiers such as border-critical/40 keep working. Ratios for every
+       pairing are recorded in tailwind.config.ts. */
+    color-scheme: light;
+    --surface: 244 241 237;
+    --surface-card: 255 255 255;
+    --surface-sunken: 237 232 225;
+    --ink: 26 24 20;
+    --ink-muted: 107 95 84;
+    --ink-inverse: 245 240 232;
+    --line: rgba(61, 43, 31, 0.14);
+    --line-strong: rgba(61, 43, 31, 0.28);
+    --line-field: rgba(61, 43, 31, 0.54); /* 3.3:1 on card, was 1.7:1 */
+    --accent-deep: 138 82 6;
+    --accent-wash: rgba(212, 130, 10, 0.12);
+    --positive: 74 91 62;
+    --positive-wash: rgba(74, 91, 62, 0.12);
+    --critical: 168 58 18;
+    --critical-wash: rgba(168, 58, 18, 0.1);
+    --skeleton-shine: #f6f2ec;
+  }
+
+  /*
+   * Admin palette, dark. Written twice because CSS has no way to share one
+   * block between a media query and an attribute selector: once for people
+   * whose system is dark and who have not chosen, once for an explicit choice.
+   * An explicit light choice is honoured by the :not() guard.
+   */
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme='light']) {
+      color-scheme: dark;
+      --surface: 22 19 15;
+      --surface-card: 31 27 22;
+      --surface-sunken: 14 12 10;
+      --ink: 245 240 232;
+      --ink-muted: 167 154 141;
+      --ink-inverse: 26 24 20;
+      --line: rgba(245, 240, 232, 0.1);
+      --line-strong: rgba(245, 240, 232, 0.22);
+      --line-field: rgba(245, 240, 232, 0.38);
+      --accent-deep: 224 160 74;
+      --accent-wash: rgba(212, 130, 10, 0.16);
+      --positive: 169 190 151;
+      --positive-wash: rgba(156, 178, 137, 0.16);
+      --critical: 236 138 102;
+      --critical-wash: rgba(226, 113, 74, 0.16);
+      --skeleton-shine: #2a251e;
+    }
+  }
+
+  :root[data-theme='dark'] {
+    color-scheme: dark;
+    --surface: 22 19 15;
+    --surface-card: 31 27 22;
+    --surface-sunken: 14 12 10;
+    --ink: 245 240 232;
+    --ink-muted: 167 154 141;
+    --ink-inverse: 26 24 20;
+    --line: rgba(245, 240, 232, 0.1);
+    --line-strong: rgba(245, 240, 232, 0.22);
+    --line-field: rgba(245, 240, 232, 0.38);
+    --accent-deep: 224 160 74;
+    --accent-wash: rgba(212, 130, 10, 0.16);
+    --positive: 169 190 151;
+    --positive-wash: rgba(156, 178, 137, 0.16);
+    --critical: 236 138 102;
+    --critical-wash: rgba(226, 113, 74, 0.16);
+    --skeleton-shine: #2a251e;
+  }
+
+  /* The menu, legal pages and sign-in are dark whatever the system says, so
+     native scrollbars and form controls there should be dark too. */
+  .on-dark {
+    color-scheme: dark;
+  }
+
+  /* Containers that receive focus only so keyboard position is kept, such as
+     <main> after "Back to top", should not draw a ring around the whole page. */
+  [tabindex='-1']:focus {
+    outline: none;
+  }
+
+  /* Keeps the skip-link target clear of the sticky headers when it scrolls
+     into view. */
+  #main {
+    scroll-margin-top: 7.5rem;
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+
+  html {
+    scroll-behavior: smooth;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    margin: 0;
+    font-family: theme('fontFamily.sans');
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /*
+   * Every interactive element gets a visible focus ring. The previous build
+   * set `outline: none` on inputs and shipped no focus style at all on
+   * buttons or links, which left keyboard users with no idea where they were.
+   */
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  /* Dark surfaces need a light ring to stay visible against amber-on-black. */
+  .on-dark :focus-visible,
+  .on-dark:focus-visible {
+    outline-color: #f5f0e8;
+  }
+
+  ::selection {
+    background: var(--accent);
+    color: var(--accent-on);
+  }
 }
 
-* {
-  box-sizing: border-box;
+@layer components {
+  /* ── Buttons ──────────────────────────────────────────────────────────── */
+
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-full font-medium;
+    @apply px-5 py-2.5 text-sm transition-colors duration-150;
+    cursor: pointer;
+    border: 1px solid transparent;
+    text-decoration: none;
+    white-space: nowrap;
+  }
+
+  .btn:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+
+  /* White on accent.strong is 5.2:1. The brighter #D4820A would only reach
+     3.0:1, which is why filled buttons use the deeper tone. */
+  .btn-primary {
+    @apply bg-accent-strong text-white;
+  }
+  .btn-primary:hover:not(:disabled) {
+    background-color: #8a5206;
+  }
+
+  .btn-secondary {
+    @apply border-line-strong bg-surface-card text-ink;
+  }
+  .btn-secondary:hover:not(:disabled) {
+    @apply bg-surface-sunken;
+  }
+
+  .btn-ghost {
+    @apply text-ink-muted;
+  }
+  .btn-ghost:hover:not(:disabled) {
+    @apply bg-surface-sunken text-ink;
+  }
+
+  /* Fixed rather than the critical token: in the dark theme that token turns
+     light enough to read as text, which would drop white-on-fill to 2.9:1. */
+  .btn-danger {
+    @apply text-white;
+    background-color: #a83a12;
+  }
+  .btn-danger:hover:not(:disabled) {
+    background-color: #8c2f0e;
+  }
+
+  /* Accent button on the dark customer surface: dark text on bright amber
+     reads 5.9:1 and keeps the brand colour at full strength. */
+  .btn-accent-dark {
+    background: var(--accent);
+    color: var(--accent-on);
+  }
+  .btn-accent-dark:hover:not(:disabled) {
+    filter: brightness(1.08);
+  }
+
+  /* ── Inputs ───────────────────────────────────────────────────────────── */
+
+  .field {
+    @apply w-full rounded-md border border-line-field bg-surface-card;
+    @apply px-3.5 py-2.5 text-sm text-ink;
+    font-family: theme('fontFamily.sans');
+    transition: border-color 150ms, box-shadow 150ms;
+  }
+  .field::placeholder {
+    @apply text-ink-muted;
+  }
+  .field:focus {
+    outline: none;
+    border-color: theme('colors.accent.strong');
+    box-shadow: 0 0 0 3px var(--accent-wash);
+  }
+  .field:focus-visible {
+    outline: none;
+  }
+  .field[aria-invalid='true'] {
+    border-color: rgb(var(--critical));
+  }
+
+  .field-dark {
+    @apply w-full rounded-md border px-4 py-3 text-base;
+    background: rgba(245, 240, 232, 0.06);
+    border-color: rgba(245, 240, 232, 0.18);
+    color: theme('colors.menu.ink');
+    font-family: theme('fontFamily.sans');
+    transition: border-color 150ms, box-shadow 150ms;
+  }
+  .field-dark::placeholder {
+    color: theme('colors.menu.ink-subtle');
+  }
+  .field-dark:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(212, 130, 10, 0.25);
+  }
+  .field-dark:focus-visible {
+    outline: none;
+  }
+
+  .label {
+    @apply mb-1.5 block text-sm font-medium text-ink;
+  }
+
+  /* ── Feedback ─────────────────────────────────────────────────────────── */
+
+  .alert {
+    @apply flex items-start gap-2 rounded-md px-4 py-3 text-sm;
+  }
+  .alert-error {
+    @apply bg-critical-wash text-critical;
+  }
+  .alert-success {
+    @apply bg-positive-wash text-positive;
+  }
+
+  .spinner {
+    @apply inline-block rounded-full border-2;
+    width: 1.25rem;
+    height: 1.25rem;
+    border-color: currentColor;
+    border-top-color: transparent;
+    animation: spin 700ms linear infinite;
+  }
+  .spinner-lg {
+    width: 2.5rem;
+    height: 2.5rem;
+    color: theme('colors.accent.strong');
+  }
+
+  .skeleton {
+    @apply rounded-md;
+    background: linear-gradient(
+      90deg,
+      rgb(var(--surface-sunken)) 25%,
+      var(--skeleton-shine) 50%,
+      rgb(var(--surface-sunken)) 75%
+    );
+    background-size: 200% 100%;
+    animation: shimmer 1.5s ease-in-out infinite;
+  }
+
+  .skeleton-dark {
+    @apply rounded-md;
+    background: linear-gradient(
+      90deg,
+      rgba(245, 240, 232, 0.05) 25%,
+      rgba(245, 240, 232, 0.1) 50%,
+      rgba(245, 240, 232, 0.05) 75%
+    );
+    background-size: 200% 100%;
+    animation: shimmer 1.5s ease-in-out infinite;
+  }
+
+  /* ── Utilities ────────────────────────────────────────────────────────── */
+
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+
+  .line-clamp-2 {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .line-clamp-3 {
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  /* Visible only to screen readers, and to sighted users on keyboard focus. */
+  .sr-only-focusable {
+    @apply sr-only;
+  }
+  .sr-only-focusable:focus {
+    @apply not-sr-only fixed left-4 top-4 z-50 rounded-md bg-surface-card px-4 py-2 text-sm text-ink shadow-raised;
+  }
 }
 
-html {
-  scroll-behavior: smooth;
+/* ── Motion ───────────────────────────────────────────────────────────────── */
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
-body {
-  font-family: 'DM Sans', sans-serif;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+@keyframes shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
 }
 
-/* Hide scrollbar but keep scroll functionality */
-.scrollbar-hide {
-  -ms-overflow-style: none;
-  scrollbar-width: none;
-}
-.scrollbar-hide::-webkit-scrollbar {
-  display: none;
-}
-
-/* Amber gradient button */
-.btn-amber {
-  background: linear-gradient(135deg, var(--amber), var(--amber-light));
-  color: white;
-  font-family: 'DM Sans', sans-serif;
-  font-weight: 600;
-  border-radius: 9999px;
-  padding: 0.625rem 1.5rem;
-  transition: opacity 0.2s, transform 0.15s;
-  border: none;
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.5rem;
-}
-.btn-amber:hover {
-  opacity: 0.9;
-  transform: translateY(-1px);
-}
-.btn-amber:active {
-  transform: translateY(0);
-  opacity: 1;
-}
-.btn-amber:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-  transform: none;
-}
-
-/* Admin input style */
-.admin-input {
-  width: 100%;
-  background: white;
-  border: 1px solid var(--border);
-  border-radius: 0.5rem;
-  padding: 0.625rem 0.875rem;
-  font-family: 'DM Sans', sans-serif;
-  font-size: 0.875rem;
-  color: var(--charcoal);
-  outline: none;
-  transition: border-color 0.15s;
-}
-.admin-input:focus {
-  border-color: var(--amber);
-  box-shadow: 0 0 0 3px rgba(212, 130, 10, 0.1);
-}
-.admin-input::placeholder {
-  color: var(--muted);
-}
-
-/* Customer dark input */
-.dark-input {
-  width: 100%;
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 0.5rem;
-  padding: 0.75rem 1rem;
-  font-family: 'DM Sans', sans-serif;
-  font-size: 1rem;
-  color: var(--cream);
-  outline: none;
-  transition: border-color 0.15s;
-}
-.dark-input:focus {
-  border-color: var(--amber);
-  box-shadow: 0 0 0 3px rgba(212, 130, 10, 0.15);
-}
-.dark-input::placeholder {
-  color: var(--muted);
-}
-
-/* Pulsing amber ring for AR surface detection */
 @keyframes pulse-ring {
   0% {
     transform: scale(0.85);
@@ -127,70 +361,251 @@ body {
     opacity: 0;
   }
 }
+
+@keyframes slide-in-right {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+@keyframes fade-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fade-out {
+  to {
+    opacity: 0;
+  }
+}
+
 .pulse-ring {
   animation: pulse-ring 1.8s cubic-bezier(0.215, 0.61, 0.355, 1) infinite;
 }
 .pulse-ring-delay {
   animation: pulse-ring 1.8s cubic-bezier(0.215, 0.61, 0.355, 1) 0.6s infinite;
 }
-
-/* Slide over transition */
-@keyframes slide-in-right {
-  from { transform: translateX(100%); }
-  to { transform: translateX(0); }
-}
-@keyframes slide-out-right {
-  from { transform: translateX(0); }
-  to { transform: translateX(100%); }
-}
 .slide-in-right {
-  animation: slide-in-right 0.3s cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-/* Toast fade */
-@keyframes fade-in-up {
-  from { opacity: 0; transform: translateY(8px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-@keyframes fade-out {
-  from { opacity: 1; }
-  to { opacity: 0; }
+  animation: slide-in-right 0.28s cubic-bezier(0.16, 1, 0.3, 1);
 }
 .fade-in-up {
-  animation: fade-in-up 0.3s ease forwards;
+  animation: fade-in-up 0.28s ease forwards;
 }
 .fade-out {
-  animation: fade-out 0.5s ease forwards;
+  animation: fade-out 0.4s ease forwards;
 }
 
-/* Line clamp utilities */
-.line-clamp-2 {
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-.line-clamp-3 {
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
+/*
+ * Respect the OS setting. Spinners keep turning (they communicate that work is
+ * in progress, and a frozen spinner reads as a hang) but everything decorative
+ * stops, and the 3D viewer's auto-rotation is disabled in the component.
+ */
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .spinner {
+    animation: spin 1.2s linear infinite !important;
+    animation-duration: 1.2s !important;
+    animation-iteration-count: infinite !important;
+  }
 }
 
-/* Skeleton shimmer */
-@keyframes shimmer {
-  0% { background-position: -200% 0; }
-  100% { background-position: 200% 0; }
+/* ── Legal documents ──────────────────────────────────────────────────────── */
+/* Long-form prose is rare enough in this app that a small scoped block beats
+   pulling in a typography plugin. */
+
+.legal-prose {
+  color: theme('colors.menu.ink-muted');
+  font-size: 1rem;
+  line-height: 1.7;
 }
-.skeleton {
-  background: linear-gradient(90deg, rgba(255,255,255,0.05) 25%, rgba(255,255,255,0.1) 50%, rgba(255,255,255,0.05) 75%);
-  background-size: 200% 100%;
-  animation: shimmer 1.5s infinite;
-  border-radius: 0.5rem;
+.legal-prose h1 {
+  font-family: theme('fontFamily.display');
+  font-size: theme('fontSize.3xl[0]');
+  font-weight: 700;
+  color: theme('colors.menu.ink');
+  margin: 0 0 0.5rem;
 }
-.skeleton-admin {
-  background: linear-gradient(90deg, #e8e0d5 25%, #f0e8dc 50%, #e8e0d5 75%);
-  background-size: 200% 100%;
-  animation: shimmer 1.5s infinite;
-  border-radius: 0.5rem;
+.legal-prose h2 {
+  font-family: theme('fontFamily.display');
+  font-size: theme('fontSize.xl[0]');
+  font-weight: 700;
+  color: theme('colors.menu.ink');
+  margin: 2.5rem 0 0.75rem;
+}
+.legal-prose h3 {
+  font-size: theme('fontSize.base[0]');
+  font-weight: 600;
+  color: theme('colors.menu.ink');
+  margin: 1.75rem 0 0.5rem;
+}
+.legal-prose p {
+  margin: 0 0 1rem;
+}
+.legal-prose .lead {
+  color: theme('colors.menu.ink-subtle');
+  font-size: theme('fontSize.sm[0]');
+  margin-bottom: 2rem;
+}
+.legal-prose ul {
+  margin: 0 0 1.25rem;
+  padding-left: 1.25rem;
+  list-style: disc;
+}
+.legal-prose li {
+  margin-bottom: 0.5rem;
+}
+/* Tailwind's reset makes links inherit colour and lose their underline, which
+   left links in these documents indistinguishable from the text around them. */
+.legal-prose a {
+  color: theme('colors.menu.ink');
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  border-radius: 2px;
+}
+.legal-prose a:hover {
+  text-decoration-thickness: 2px;
+}
+.legal-prose strong {
+  color: theme('colors.menu.ink');
+  font-weight: 600;
+}
+.legal-prose code {
+  font-family: theme('fontFamily.mono');
+  font-size: 0.875em;
+  background: rgba(245, 240, 232, 0.08);
+  padding: 0.1em 0.35em;
+  border-radius: 0.25rem;
+}
+
+/* ── Help accordion ───────────────────────────────────────────────────────── */
+/* Native <details>: expands in place, keyboard and screen-reader support come
+   free, and it works before JavaScript loads. */
+
+.faq-item > summary {
+  list-style: none;
+  cursor: pointer;
+}
+.faq-item > summary::-webkit-details-marker {
+  display: none;
+}
+.faq-chevron {
+  transition: transform 150ms ease;
+}
+.faq-item[open] .faq-chevron {
+  transform: rotate(180deg);
+}
+
+/* ── Print ────────────────────────────────────────────────────────────────── */
+/*
+ * The printable things here are a restaurant's menu, the legal and help
+ * documents, and the QR codes on the branding and products screens, which
+ * restaurants print for table cards.
+ */
+
+@media print {
+  @page {
+    margin: 16mm;
+  }
+
+  /* Paper is white whichever theme is active on screen. */
+  :root,
+  :root[data-theme] {
+    color-scheme: light;
+    --surface: 255 255 255 !important;
+    --surface-card: 255 255 255 !important;
+    --surface-sunken: 245 241 236 !important;
+    --ink: 26 24 20 !important;
+    --ink-muted: 74 66 58 !important;
+    --line: rgba(61, 43, 31, 0.2) !important;
+    --line-strong: rgba(61, 43, 31, 0.35) !important;
+    --line-field: rgba(61, 43, 31, 0.54) !important;
+    --accent-deep: 138 82 6 !important;
+    --positive: 74 91 62 !important;
+    --critical: 168 58 18 !important;
+  }
+
+  html,
+  body {
+    background: #fff !important;
+    scroll-behavior: auto !important;
+  }
+
+  .sr-only-focusable {
+    display: none !important;
+  }
+
+  /*
+   * Browsers drop background colours when printing but keep text colours, so
+   * the cream-on-black menu would come out as pale grey on white. Reset the
+   * dark surfaces to ink on paper.
+   */
+  .on-dark,
+  .on-dark * {
+    background-color: transparent !important;
+    background-image: none !important;
+    box-shadow: none !important;
+    backdrop-filter: none !important;
+  }
+  .on-dark,
+  .text-menu-ink,
+  .legal-prose h1,
+  .legal-prose h2,
+  .legal-prose h3,
+  .legal-prose strong {
+    color: #1a1814 !important;
+  }
+  .text-menu-ink-muted,
+  .legal-prose {
+    color: #3d352d !important;
+  }
+  .text-menu-ink-subtle {
+    color: #5c534a !important;
+  }
+  .border-menu-border {
+    border-color: #d8d0c6 !important;
+  }
+  .menu-price {
+    color: #8a5206 !important;
+  }
+
+  /* Paper cannot be clicked, so print where external links go. */
+  .legal-prose a[href^='http']::after,
+  .legal-prose a[href^='mailto:']::after {
+    content: ' (' attr(href) ')';
+    font-size: 0.85em;
+  }
+
+  article,
+  details,
+  li,
+  tr,
+  canvas {
+    break-inside: avoid;
+  }
+  h1,
+  h2,
+  h3 {
+    break-after: avoid;
+  }
 }
