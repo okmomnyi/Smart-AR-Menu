@@ -12,6 +12,11 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
+# public/ holds no tracked files at the moment (the sample 3D models stay out
+# of git), and git does not keep empty folders, so a fresh checkout has none.
+# The runtime stage copies it, so make sure it exists.
+RUN mkdir -p public
+
 # NEXT_PUBLIC_* values are inlined into the client bundle at build time.
 ARG NEXT_PUBLIC_API_URL
 ARG NEXT_PUBLIC_APP_URL
