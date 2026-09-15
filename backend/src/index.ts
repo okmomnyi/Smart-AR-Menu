@@ -14,6 +14,7 @@ import productRoutes from './routes/product.routes'
 import categoryRoutes from './routes/category.routes'
 import uploadRoutes from './routes/upload.routes'
 import menuRoutes from './routes/menu.routes'
+import mediaRoutes from './routes/media.routes'
 
 const app = express()
 
@@ -135,6 +136,16 @@ const apiLimiter = rateLimit({
   message: { error: 'Too many requests, please try again later.' },
 })
 
+// A menu page pulls one photo per dish, and the image optimiser fetches each
+// photo at several widths, often from a single server IP. Generous, but still
+// bounded.
+const mediaLimiter = rateLimit({
+  ...base,
+  windowMs: 60 * 1000,
+  limit: 600,
+  message: { error: 'Too many requests, please try again later.' },
+})
+
 // ── Health check ─────────────────────────────────────────────────────────────
 app.get('/health', publicLimiter, (_req: Request, res: Response) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() })
@@ -150,6 +161,7 @@ app.use('/restaurants/:id/categories', apiLimiter, categoryRoutes)
 app.use('/restaurants', apiLimiter, restaurantRoutes)
 app.use('/upload', uploadLimiter, uploadRoutes)
 app.use('/menu', publicLimiter, menuRoutes)
+app.use('/media', mediaLimiter, mediaRoutes)
 
 // ── 404 ──────────────────────────────────────────────────────────────────────
 app.use((_req: Request, res: Response) => {

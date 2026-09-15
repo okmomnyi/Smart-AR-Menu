@@ -256,6 +256,12 @@ The API runs with `API_PATH_PREFIX=/api`, which strips the prefix before routing
 and scopes the refresh cookie to `/api/auth`. `TRUST_PROXY_HOPS` is `1` for the
 tunnel.
 
+Uploaded photos and models are served by the API at `/api/media/...`, read
+from R2 with the same keys that write them. That needs no public bucket URL and
+no bucket CORS rules, and the 3D viewer loads models from the site's own
+origin. `R2_PUBLIC_URL` is set to that route; pointing it at a public bucket
+domain instead switches to direct delivery with no code change.
+
 ### Elsewhere
 
 **Backend:** any Node 22 host with PostgreSQL. Set every variable in

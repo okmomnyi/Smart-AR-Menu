@@ -2,7 +2,9 @@ import {
   S3Client,
   PutObjectCommand,
   DeleteObjectsCommand,
+  GetObjectCommand,
 } from '@aws-sdk/client-s3'
+import type { Readable } from 'stream'
 import { env } from './env'
 import { prisma } from './prisma'
 import { HttpError, payloadTooLarge } from './http-error'
@@ -94,6 +96,40 @@ export async function storeAsset(params: {
   }
 
   return { url, bytes }
+}
+
+export interface StoredObject {
+  body: Readable
+  contentLength?: number
+  etag?: string
+  lastModified?: Date
+}
+
+/**
+ * Reads an object for the media route. Returns 'not-modified' when the
+ * caller's ETag still matches, and null when there is no such object.
+ */
+export async function readAsset(
+  key: string,
+  ifNoneMatch?: string
+): Promise<StoredObject | 'not-modified' | null> {
+  const s3 = requireClient()
+  try {
+    const object = await s3.send(
+      new GetObjectCommand({ Bucket: env.r2.bucket, Key: key, IfNoneMatch: ifNoneMatch })
+    )
+    return {
+      body: object.Body as Readable,
+      contentLength: object.ContentLength,
+      etag: object.ETag,
+      lastModified: object.LastModified,
+    }
+  } catch (err) {
+    const status = (err as { $metadata?: { httpStatusCode?: number } }).$metadata?.httpStatusCode
+    if (status === 304) return 'not-modified'
+    if (status === 404) return null
+    throw err
+  }
 }
 
 async function deleteObjects(keys: string[]): Promise<void> {

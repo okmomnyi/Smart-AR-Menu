@@ -15,6 +15,21 @@ if (mediaHostname) {
   remotePatterns.push({ protocol: 'https', hostname: mediaHostname })
 }
 
+// Uploads can also be served by the API's own media route, which keeps them
+// on the site's origin when the bucket has no public URL. Allow exactly that
+// path on the API's host, not the whole host.
+try {
+  const api = new URL(process.env.NEXT_PUBLIC_API_URL ?? '')
+  remotePatterns.push({
+    protocol: api.protocol.replace(':', ''),
+    hostname: api.hostname,
+    port: api.port,
+    pathname: `${api.pathname.replace(/\/$/, '')}/media/**`,
+  })
+} catch {
+  // No API URL at build time; nothing to allow.
+}
+
 const nextConfig = {
   output: 'standalone',
   poweredByHeader: false,
