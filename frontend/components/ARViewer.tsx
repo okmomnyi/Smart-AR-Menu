@@ -82,6 +82,12 @@ export default function ARViewer({ product, slug }: ARViewerProps) {
   const reticleRef = useRef<THREE.Mesh | null>(null)
   const sessionRef = useRef<XRSession | null>(null)
   const hitTestSourceRef = useRef<XRHitTestSource | null>(null)
+  // 'full' asks for surface detection; 'basic' starts AR without requiring it.
+  // Once a phone refuses 'full', later taps go straight to 'basic'.
+  const arConfigRef = useRef<'full' | 'basic'>('full')
+  // Set when the session has no surface detection: the dish is placed a fixed
+  // distance in front of the camera instead of on a detected table.
+  const freePlacementRef = useRef(false)
 
   /**
    * Model-space size of the model's largest horizontal dimension. Every target
@@ -105,6 +111,7 @@ export default function ARViewer({ product, slug }: ARViewerProps) {
   const [surfaceFound, setSurfaceFound] = useState(false)
   const [imageFailed, setImageFailed] = useState(false)
   const [placed, setPlaced] = useState(false)
+  const [freePlacement, setFreePlacement] = useState(false)
   const [arError, setArError] = useState('')
   const [arErrorDetail, setArErrorDetail] = useState('')
 
@@ -250,6 +257,10 @@ export default function ARViewer({ product, slug }: ARViewerProps) {
       }
     )
 
+    // Reused every frame for free placement rather than allocated per frame.
+    const viewerMatrix = new THREE.Matrix4()
+    const aheadPoint = new THREE.Vector3()
+
     renderer.setAnimationLoop((_time, frame) => {
       const model = modelRef.current
 
@@ -278,6 +289,18 @@ export default function ARViewer({ product, slug }: ARViewerProps) {
             }
           } else {
             reticleRef.current.visible = false
+          }
+        } else if (freePlacementRef.current && referenceSpace && reticleRef.current) {
+          // No surface detection on this phone. Hold the ring 60 cm ahead of
+          // and 25 cm below the camera, level with the ground, so the guest can
+          // still put the dish in the room by holding the phone over the table.
+          const viewer = frame.getViewerPose(referenceSpace)
+          if (viewer) {
+            viewerMatrix.fromArray(viewer.transform.matrix)
+            aheadPoint.set(0, -0.25, -0.6).applyMatrix4(viewerMatrix)
+            reticleRef.current.matrix.makeTranslation(aheadPoint.x, aheadPoint.y, aheadPoint.z)
+            reticleRef.current.visible = true
+            setSurfaceFound(true)
           }
         }
       } else {
@@ -345,13 +368,29 @@ export default function ARViewer({ product, slug }: ARViewerProps) {
     setArErrorDetail('')
     let session: XRSession | null = null
     try {
-      const active = await xr.requestSession('immersive-ar', {
-        requiredFeatures: ['hit-test'],
-        optionalFeatures: ['dom-overlay'],
-        // Without a domOverlay root the entire control panel — price, sizes,
-        // exit button — is invisible for the whole AR session.
-        domOverlay: { root: overlayRef.current },
-      })
+      const root = overlayRef.current
+      const request = (config: 'full' | 'basic') =>
+        xr.requestSession('immersive-ar', {
+          ...(config === 'full'
+            ? { requiredFeatures: ['hit-test'], optionalFeatures: ['dom-overlay'] }
+            : { optionalFeatures: ['hit-test', 'dom-overlay'] }),
+          // Without a domOverlay root the whole control panel (price, sizes,
+          // exit button) is invisible for the entire AR session.
+          domOverlay: { root },
+        })
+
+      let active: XRSession
+      try {
+        active = await request(arConfigRef.current)
+      } catch (err) {
+        // Some phones run AR but refuse a session that requires surface
+        // detection. Try once more without requiring it.
+        if (arConfigRef.current !== 'full' || !(err instanceof DOMException) || err.name !== 'NotSupportedError') {
+          throw err
+        }
+        arConfigRef.current = 'basic'
+        active = await request('basic')
+      }
       session = active
 
       sessionRef.current = active
@@ -367,9 +406,20 @@ export default function ARViewer({ product, slug }: ARViewerProps) {
       renderer.xr.setReferenceSpaceType('local')
       await renderer.xr.setSession(active)
 
-      const viewerSpace = await active.requestReferenceSpace('viewer')
-      hitTestSourceRef.current =
-        (await active.requestHitTestSource?.({ space: viewerSpace })) ?? null
+      let source: XRHitTestSource | null = null
+      const enabled = (active as XRSession & { enabledFeatures?: readonly string[] }).enabledFeatures
+      if (!enabled || enabled.includes('hit-test')) {
+        try {
+          const viewerSpace = await active.requestReferenceSpace('viewer')
+          source = (await active.requestHitTestSource?.({ space: viewerSpace })) ?? null
+        } catch {
+          // Surface detection was not granted; fall back to free placement.
+          source = null
+        }
+      }
+      hitTestSourceRef.current = source
+      freePlacementRef.current = !source
+      setFreePlacement(!source)
 
       if (modelRef.current) modelRef.current.visible = false
 
@@ -399,6 +449,8 @@ export default function ARViewer({ product, slug }: ARViewerProps) {
           modelRef.current.position.set(0, 0, 0)
           modelRef.current.quaternion.identity()
         }
+        freePlacementRef.current = false
+        setFreePlacement(false)
         setMode('orbit')
         setPlaced(false)
         setSurfaceFound(false)
@@ -416,7 +468,18 @@ export default function ARViewer({ product, slug }: ARViewerProps) {
       sessionRef.current = null
       const { message, detail } = describeArFailure(err)
       console.error('AR start failed:', detail)
-      setArError(message)
+      const unsupported =
+        arConfigRef.current === 'basic' && err instanceof DOMException && err.name === 'NotSupportedError'
+      if (unsupported) {
+        // Refused even without surface detection: this browser on this phone
+        // cannot run AR at all. Stop offering a button that cannot work.
+        setArSupported(false)
+        setArError(
+          "AR isn't available in this phone's browser. On Android it needs Google Play Services for AR, which not every phone supports. The 3D preview still works."
+        )
+      } else {
+        setArError(message)
+      }
       setArErrorDetail(detail)
     }
   }, [])
@@ -561,7 +624,7 @@ export default function ARViewer({ product, slug }: ARViewerProps) {
             className="pointer-events-none absolute left-1/2 top-1/2 z-10 -translate-x-1/2 -translate-y-1/2 rounded-full bg-black/60 px-4 py-2 text-sm text-menu-ink backdrop-blur"
           >
             <Check size={14} className="mr-1.5 inline" aria-hidden />
-            Surface found. Tap to place
+            {freePlacement ? 'Hold your phone over the table, then tap to place' : 'Surface found. Tap to place'}
           </p>
         )}
 
