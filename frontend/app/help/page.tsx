@@ -8,7 +8,7 @@ import DetailsBehaviour from '../../components/DetailsBehaviour'
 export const metadata: Metadata = {
   title: 'Help',
   description:
-    'How to browse a restaurant menu and view dishes in 3D or on your table, and why some phones only show the 3D preview.',
+    'How to browse a restaurant menu, view dishes in 3D, and what the AR button does on your phone.',
   alternates: { canonical: '/help' },
 }
 
@@ -33,18 +33,31 @@ const QUESTIONS: Question[] = [
   },
   {
     id: 'ar-devices',
-    question: 'Why can I turn the dish but not place it on my table?',
+    question: 'Why does my phone show a different AR button?',
     answer: (
       <>
         <p>
-          Placing a dish on the table uses augmented reality inside the browser, a standard
-          called WebXR. It works in Chrome on Android phones that have Google Play Services for
-          AR, and in some headset browsers. When it is available you will see a{' '}
-          <strong>View on your table</strong> button.
+          Phones reach augmented reality in different ways, so the button changes to match
+          yours.
         </p>
+        <ul>
+          <li>
+            <strong>View on your table</strong> on most recent Android phones: Chrome uses
+            Google Play Services for AR to find your table and set the dish on it.
+          </li>
+          <li>
+            <strong>View on your table</strong> on iPhone and iPad: the dish opens in
+            Apple&apos;s AR Quick Look at the size you picked.
+          </li>
+          <li>
+            <strong>View through camera</strong> on older phones without either: the dish
+            appears over your camera and follows your phone&apos;s movement. It cannot lock
+            onto the table, so its size is approximate.
+          </li>
+        </ul>
         <p>
-          Safari on iPhone and iPad does not support it yet. On those devices you get the 3D
-          preview instead: drag to turn the dish and switch between sizes to compare them.
+          Whichever you get, you can always drag the 3D preview to turn the dish and switch
+          sizes to compare them.
         </p>
       </>
     ),

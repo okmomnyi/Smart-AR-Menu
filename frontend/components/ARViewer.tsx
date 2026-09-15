@@ -1,15 +1,70 @@
 'use client'
 
-import React, { useCallback, useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import Image from 'next/image'
 import Link from 'next/link'
 import * as THREE from 'three'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
-import { ChevronLeft, Box, Check, AlertCircle, RotateCcw, ImageOff } from 'lucide-react'
+import { USDZExporter } from 'three/examples/jsm/exporters/USDZExporter.js'
+import {
+  ChevronLeft,
+  Box,
+  Check,
+  AlertCircle,
+  RotateCcw,
+  ImageOff,
+  Camera,
+  Crosshair,
+  X,
+} from 'lucide-react'
 import type { Product } from '../lib/api'
 
-type Mode = 'orbit' | 'ar'
+// orbit: 3D preview. ar: WebXR on the table. camera: the dish drawn over the
+// live camera and steered by motion sensors, for phones with no system AR.
+type Mode = 'orbit' | 'ar' | 'camera'
+
+// Where the dish sits in the camera view: 60 cm ahead of the phone and 35 cm
+// below it, roughly a plate on a table seen from a seated guest's hand.
+const CAMERA_VIEW_DISTANCE = 0.6
+const CAMERA_VIEW_DROP = 0.35
+// Phone rear cameras cover roughly this many degrees across their long side.
+const PHONE_CAMERA_LONG_FOV = 63
+
+const noSubscribe = () => () => undefined
+
+/** iPhone and iPad Safari open rel="ar" links in AR Quick Look. */
+function supportsQuickLook(): boolean {
+  const link = document.createElement('a')
+  return Boolean(link.relList?.supports?.('ar'))
+}
+
+/** A touch device that can open a camera stream. */
+function supportsCameraView(): boolean {
+  return (
+    Boolean(navigator.mediaDevices?.getUserMedia) &&
+    window.matchMedia('(pointer: coarse)').matches
+  )
+}
+
+function describeCameraFailure(err: unknown): { message: string; detail: string } {
+  const name = err instanceof Error ? err.name : 'Error'
+  const detail = err instanceof Error ? `${err.name}: ${err.message}` : String(err)
+  switch (name) {
+    case 'NotAllowedError':
+      return {
+        message: 'Camera access was declined. Allow the camera for this site, then tap again.',
+        detail,
+      }
+    case 'NotFoundError':
+    case 'OverconstrainedError':
+      return { message: 'No usable camera was found on this device.', detail }
+    case 'NotReadableError':
+      return { message: 'Another app is using the camera. Close it, then try again.', detail }
+    default:
+      return { message: 'The camera view could not start. The 3D preview still works.', detail }
+  }
+}
 
 interface ARViewerProps {
   product: Product
@@ -76,6 +131,25 @@ export default function ARViewer({ product, slug }: ARViewerProps) {
   // The details sheet over the bottom of the canvas, measured so the dish is
   // framed in the part of the screen the sheet leaves visible.
   const sheetRef = useRef<HTMLDivElement>(null)
+  const videoRef = useRef<HTMLVideoElement>(null)
+
+  // Camera view. The render loop is created once, so it reads these refs.
+  const modeRef = useRef<Mode>('orbit')
+  const streamRef = useRef<MediaStream | null>(null)
+  const orientationRef = useRef<{ alpha: number; beta: number; gamma: number } | null>(null)
+  const cameraPlacedRef = useRef(false)
+  const cameraStartedAtRef = useRef(0)
+  const motionTimerRef = useRef<number | undefined>(undefined)
+  const savedOrbitRef = useRef<{
+    position: THREE.Vector3
+    quaternion: THREE.Quaternion
+    fov: number
+  } | null>(null)
+  const placeInFrontRef = useRef<() => void>(() => undefined)
+  const quickLookUrlRef = useRef<string | null>(null)
+
+  const quickLook = useSyncExternalStore(noSubscribe, supportsQuickLook, () => false)
+  const cameraCapable = useSyncExternalStore(noSubscribe, supportsCameraView, () => false)
 
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null)
   const sceneRef = useRef<THREE.Scene | null>(null)
@@ -117,6 +191,25 @@ export default function ARViewer({ product, slug }: ARViewerProps) {
   const [freePlacement, setFreePlacement] = useState(false)
   const [arError, setArError] = useState('')
   const [arErrorDetail, setArErrorDetail] = useState('')
+  const [coveredPx, setCoveredPx] = useState(0)
+  const [motionAvailable, setMotionAvailable] = useState(true)
+  const [quickLookReady, setQuickLookReady] = useState(false)
+
+  const switchMode = useCallback((next: Mode) => {
+    modeRef.current = next
+    setMode(next)
+  }, [])
+
+  // Kept stable so the same function can be added and removed as a listener.
+  const onOrientation = useRef((event: DeviceOrientationEvent) => {
+    if (event.alpha === null && event.beta === null && event.gamma === null) return
+    const rad = THREE.MathUtils.degToRad
+    orientationRef.current = {
+      alpha: rad(event.alpha ?? 0),
+      beta: rad(event.beta ?? 0),
+      gamma: rad(event.gamma ?? 0),
+    }
+  }).current
 
   const sizes = product.sizes
   const selected = sizes[sizeIndex]
@@ -264,6 +357,32 @@ export default function ARViewer({ product, slug }: ARViewerProps) {
     const viewerMatrix = new THREE.Matrix4()
     const aheadPoint = new THREE.Vector3()
 
+    // Device orientation to camera rotation: the standard mapping from the W3C
+    // DeviceOrientation frame to three.js. Objects are reused, not reallocated.
+    const zee = new THREE.Vector3(0, 0, 1)
+    const euler = new THREE.Euler()
+    const screenTwist = new THREE.Quaternion()
+    const worldToCamera = new THREE.Quaternion(-Math.sqrt(0.5), 0, 0, Math.sqrt(0.5))
+    const deviceQuaternion = new THREE.Quaternion()
+    const forward = new THREE.Vector3()
+
+    placeInFrontRef.current = () => {
+      const pivot = modelRef.current
+      if (!pivot) return
+      camera.getWorldDirection(forward)
+      forward.y = 0
+      if (forward.lengthSq() < 1e-6) forward.set(0, 0, -1)
+      forward.normalize()
+      pivot.position.set(
+        forward.x * CAMERA_VIEW_DISTANCE,
+        -CAMERA_VIEW_DROP,
+        forward.z * CAMERA_VIEW_DISTANCE
+      )
+      // Turn the dish to face the guest.
+      pivot.rotation.set(0, Math.atan2(forward.x, forward.z) + Math.PI, 0)
+      cameraPlacedRef.current = true
+    }
+
     renderer.setAnimationLoop((_time, frame) => {
       const model = modelRef.current
 
@@ -306,6 +425,25 @@ export default function ARViewer({ product, slug }: ARViewerProps) {
             setSurfaceFound(true)
           }
         }
+      } else if (modeRef.current === 'camera') {
+        const o = orientationRef.current
+        if (o) {
+          const screenAngle = THREE.MathUtils.degToRad(window.screen.orientation?.angle ?? 0)
+          euler.set(o.beta, o.alpha, -o.gamma, 'YXZ')
+          deviceQuaternion.setFromEuler(euler)
+          deviceQuaternion.multiply(worldToCamera)
+          deviceQuaternion.multiply(screenTwist.setFromAxisAngle(zee, -screenAngle))
+          // Smooth out sensor jitter.
+          camera.quaternion.slerp(deviceQuaternion, 0.3)
+        }
+        // Place the dish once the first reading has turned the camera, or after
+        // a short wait on phones that never send one.
+        if (
+          !cameraPlacedRef.current &&
+          (o || performance.now() - cameraStartedAtRef.current > 1200)
+        ) {
+          placeInFrontRef.current()
+        }
       } else {
         controls.update()
       }
@@ -326,6 +464,9 @@ export default function ARViewer({ product, slug }: ARViewerProps) {
       // dish off the top.
       const covered = Math.min(sheetRef.current?.offsetHeight ?? 0, height * 0.6)
       camera.setViewOffset(width, height, 0, covered / 2, width, height)
+      // The camera feed shifts by the same amount so the dish stays aligned
+      // with the room behind it.
+      setCoveredPx(covered)
       camera.updateProjectionMatrix()
       renderer.setSize(width, height, false)
     })
@@ -341,6 +482,13 @@ export default function ARViewer({ product, slug }: ARViewerProps) {
       hitTestSourceRef.current = null
       void sessionRef.current?.end().catch(() => undefined)
       sessionRef.current = null
+
+      window.removeEventListener('deviceorientation', onOrientation)
+      window.clearTimeout(motionTimerRef.current)
+      streamRef.current?.getTracks().forEach((track) => track.stop())
+      streamRef.current = null
+      if (quickLookUrlRef.current) URL.revokeObjectURL(quickLookUrlRef.current)
+      quickLookUrlRef.current = null
 
       controls.dispose()
       if (modelRef.current) {
@@ -487,7 +635,7 @@ export default function ARViewer({ product, slug }: ARViewerProps) {
         // cannot run AR at all. Stop offering a button that cannot work.
         setArSupported(false)
         setArError(
-          "AR isn't available in this phone's browser. On Android it needs Google Play Services for AR, which not every phone supports. The 3D preview still works."
+          "This phone's browser can't lock the dish to your table, which needs Google Play Services for AR. You can still see it through your camera."
         )
       } else {
         setArError(message)
@@ -495,6 +643,160 @@ export default function ARViewer({ product, slug }: ARViewerProps) {
       setArErrorDetail(detail)
     }
   }, [])
+
+  const exitCameraView = useCallback(() => {
+    window.removeEventListener('deviceorientation', onOrientation)
+    window.clearTimeout(motionTimerRef.current)
+    streamRef.current?.getTracks().forEach((track) => track.stop())
+    streamRef.current = null
+    if (videoRef.current) videoRef.current.srcObject = null
+
+    const camera = cameraRef.current
+    const controls = controlsRef.current
+    const pivot = modelRef.current
+    const saved = savedOrbitRef.current
+    if (camera && saved) {
+      camera.position.copy(saved.position)
+      camera.quaternion.copy(saved.quaternion)
+      camera.fov = saved.fov
+      camera.updateProjectionMatrix()
+    }
+    if (pivot) {
+      pivot.position.set(0, 0, 0)
+      pivot.rotation.set(0, 0, 0)
+    }
+    if (controls) {
+      controls.enabled = true
+      controls.autoRotate = !prefersReducedMotion()
+      controls.update()
+    }
+    switchMode('orbit')
+  }, [onOrientation, switchMode])
+
+  const startCameraView = useCallback(async () => {
+    const video = videoRef.current
+    const camera = cameraRef.current
+    const controls = controlsRef.current
+    const canvas = canvasRef.current
+    if (!video || !camera || !controls || !canvas || !modelRef.current) return
+
+    setArError('')
+    setArErrorDetail('')
+    try {
+      // iOS gates motion sensors behind a prompt; Android does not.
+      const orientationEvent = window.DeviceOrientationEvent as unknown as {
+        requestPermission?: () => Promise<string>
+      }
+      if (typeof orientationEvent?.requestPermission === 'function') {
+        await orientationEvent.requestPermission().catch(() => 'denied')
+      }
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: 'environment' } },
+        audio: false,
+      })
+      streamRef.current = stream
+      video.srcObject = stream
+      await video.play()
+    } catch (err) {
+      streamRef.current?.getTracks().forEach((track) => track.stop())
+      streamRef.current = null
+      const { message, detail } = describeCameraFailure(err)
+      console.error('Camera view failed:', detail)
+      setArError(message)
+      setArErrorDetail(detail)
+      return
+    }
+
+    savedOrbitRef.current = {
+      position: camera.position.clone(),
+      quaternion: camera.quaternion.clone(),
+      fov: camera.fov,
+    }
+    controls.enabled = false
+    controls.autoRotate = false
+    camera.position.set(0, 0, 0)
+    camera.quaternion.identity()
+
+    // Match the virtual camera to the part of the feed that is on screen, so
+    // the dish is drawn at roughly the size the real lens would show it.
+    const vw = video.videoWidth || 720
+    const vh = video.videoHeight || 1280
+    const sw = canvas.clientWidth
+    const sh = Math.max(canvas.clientHeight, 1)
+    const tanHalf = (deg: number) => Math.tan(THREE.MathUtils.degToRad(deg) / 2)
+    const videoVerticalFov =
+      vh >= vw
+        ? PHONE_CAMERA_LONG_FOV
+        : THREE.MathUtils.radToDeg(2 * Math.atan(tanHalf(PHONE_CAMERA_LONG_FOV) * (vh / vw)))
+    const coverScale = Math.max(sw / vw, sh / vh)
+    const visibleFraction = sh / (vh * coverScale)
+    camera.fov = THREE.MathUtils.radToDeg(2 * Math.atan(tanHalf(videoVerticalFov) * visibleFraction))
+    camera.updateProjectionMatrix()
+
+    orientationRef.current = null
+    cameraPlacedRef.current = false
+    cameraStartedAtRef.current = performance.now()
+    window.addEventListener('deviceorientation', onOrientation)
+    setMotionAvailable(true)
+    motionTimerRef.current = window.setTimeout(() => {
+      if (!orientationRef.current) setMotionAvailable(false)
+    }, 1500)
+    switchMode('camera')
+  }, [onOrientation, switchMode])
+
+  // iPhone: export the dish at the selected size as USDZ for AR Quick Look.
+  // Done ahead of the tap, because Safari only opens Quick Look straight from a
+  // tap, not from one that first waited on an export.
+  useEffect(() => {
+    if (!quickLook || modelState !== 'ready') return
+    const pivot = modelRef.current
+    if (!pivot) return
+    let cancelled = false
+    const build = async () => {
+      setQuickLookReady(false)
+      const shown = pivot.scale.x
+      pivot.scale.setScalar(targetScaleRef.current)
+      pivot.updateMatrixWorld(true)
+      try {
+        const data = await new USDZExporter().parseAsync(pivot, {
+          quickLookCompatible: true,
+          ar: { anchoring: { type: 'plane' }, planeAnchoring: { alignment: 'horizontal' } },
+        })
+        if (cancelled) return
+        if (quickLookUrlRef.current) URL.revokeObjectURL(quickLookUrlRef.current)
+        quickLookUrlRef.current = URL.createObjectURL(
+          new Blob([data as unknown as BlobPart], { type: 'model/vnd.usdz+zip' })
+        )
+        setQuickLookReady(true)
+      } catch (err) {
+        if (!cancelled) {
+          console.error('USDZ export failed:', err)
+          setArError('This dish could not be prepared for AR on iPhone. The 3D preview still works.')
+          setArErrorDetail(err instanceof Error ? `${err.name}: ${err.message}` : String(err))
+        }
+      } finally {
+        pivot.scale.setScalar(shown)
+      }
+    }
+    void build()
+    return () => {
+      cancelled = true
+    }
+  }, [quickLook, modelState, sizeIndex])
+
+  function openQuickLook() {
+    const url = quickLookUrlRef.current
+    if (!url) return
+    const link = document.createElement('a')
+    link.setAttribute('rel', 'ar')
+    // Fixed scale: the point is to see the dish at its real size.
+    link.href = `${url}#allowsContentScaling=0`
+    // Quick Look only recognises the link when it wraps an image.
+    link.appendChild(document.createElement('img'))
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+  }
 
   function exitAR() {
     void sessionRef.current?.end().catch(() => undefined)
@@ -542,17 +844,39 @@ export default function ARViewer({ product, slug }: ARViewerProps) {
   }
 
   return (
-    <main id="main" tabIndex={-1} className="on-dark fixed inset-0 overflow-hidden">
+    <main id="main" tabIndex={-1} className="on-dark fixed inset-0 overflow-hidden bg-menu-bg">
+      <video
+        ref={videoRef}
+        playsInline
+        muted
+        aria-hidden
+        className={`absolute inset-0 h-full w-full object-cover ${mode === 'camera' ? '' : 'hidden'}`}
+        style={{ transform: `translateY(${-coveredPx / 2}px)` }}
+      />
       <canvas
         ref={canvasRef}
         className="absolute inset-0 h-full w-full"
-        style={{ background: mode === 'ar' ? 'transparent' : '#0E0C0A' }}
+        style={{ background: mode === 'orbit' ? '#0E0C0A' : 'transparent' }}
       />
 
       {/* This subtree is handed to WebXR as the DOM overlay, so it stays
-          visible and interactive during the AR session. */}
-      <div ref={overlayRef} className="absolute inset-0">
-        {mode === 'ar' ? (
+          visible and interactive during the AR session. Touches pass through it
+          to the canvas except on its own controls: covering the canvas outright
+          meant "Drag to rotate" never reached the 3D controls. */}
+      <div
+        ref={overlayRef}
+        className="pointer-events-none absolute inset-0 [&_a]:pointer-events-auto [&_button]:pointer-events-auto"
+      >
+        {mode === 'camera' ? (
+          <button
+            type="button"
+            onClick={exitCameraView}
+            className="absolute left-4 top-4 z-20 inline-flex items-center gap-1.5 rounded-full bg-black/60 px-3 py-2 text-sm text-menu-ink backdrop-blur"
+          >
+            <X size={16} aria-hidden />
+            Close camera
+          </button>
+        ) : mode === 'ar' ? (
           <button
             type="button"
             onClick={exitAR}
@@ -573,12 +897,23 @@ export default function ARViewer({ product, slug }: ARViewerProps) {
 
         <p
           className="absolute right-4 top-4 z-20 rounded-full bg-black/60 px-3 py-1.5 text-xs font-semibold backdrop-blur"
-          style={{ color: mode === 'ar' ? 'var(--accent)' : undefined }}
+          style={{ color: mode === 'orbit' ? undefined : 'var(--accent)' }}
         >
-          <span className={mode === 'ar' ? '' : 'text-menu-ink-muted'}>
-            {mode === 'ar' ? 'AR' : '3D preview'}
+          <span className={mode === 'orbit' ? 'text-menu-ink-muted' : ''}>
+            {mode === 'ar' ? 'AR' : mode === 'camera' ? 'Camera view' : '3D preview'}
           </span>
         </p>
+
+        {mode === 'camera' && (
+          <p
+            role="status"
+            className="absolute inset-x-4 top-16 z-20 rounded-2xl bg-black/60 px-4 py-2.5 text-center text-sm text-menu-ink backdrop-blur"
+          >
+            {motionAvailable
+              ? "Point your phone down at the table. The dish follows your phone's movement, so its size is approximate."
+              : "This phone's motion sensors aren't available, so the dish stays in the middle of the view. Its size is approximate."}
+          </p>
+        )}
 
         {modelState === 'loading' && (
           <div className="pointer-events-none absolute inset-0 z-10 flex flex-col items-center justify-center gap-3">
@@ -642,7 +977,7 @@ export default function ARViewer({ product, slug }: ARViewerProps) {
 
         <div
           ref={sheetRef}
-          className="absolute inset-x-0 bottom-0 z-20 rounded-t-3xl border-t border-menu-border bg-menu-bg/92 px-6 pb-8 pt-5 backdrop-blur-xl"
+          className="pointer-events-auto absolute inset-x-0 bottom-0 z-20 rounded-t-3xl border-t border-menu-border bg-menu-bg/92 px-6 pb-8 pt-5 backdrop-blur-xl"
         >
           <div className="mx-auto mb-4 h-1 w-10 rounded-full bg-white/20" aria-hidden />
 
@@ -702,16 +1037,45 @@ export default function ARViewer({ product, slug }: ARViewerProps) {
               {selected ? `$${selected.price.toFixed(2)}` : ''}
             </p>
 
+            {mode === 'camera' && (
+              <button
+                type="button"
+                onClick={() => placeInFrontRef.current()}
+                className="btn btn-accent-dark"
+              >
+                <Crosshair size={16} aria-hidden />
+                Re-centre dish
+              </button>
+            )}
+
             {mode === 'orbit' && modelState === 'ready' && (
-              arSupported ? (
+              quickLook ? (
+                <button
+                  type="button"
+                  onClick={openQuickLook}
+                  disabled={!quickLookReady}
+                  className="btn btn-accent-dark"
+                >
+                  <Box size={16} aria-hidden />
+                  {quickLookReady ? 'View on your table' : 'Preparing AR…'}
+                </button>
+              ) : arSupported ? (
                 <button type="button" onClick={() => void startAR()} className="btn btn-accent-dark">
                   <Box size={16} aria-hidden />
                   View on your table
                 </button>
+              ) : cameraCapable ? (
+                <button
+                  type="button"
+                  onClick={() => void startCameraView()}
+                  className="btn btn-accent-dark"
+                >
+                  <Camera size={16} aria-hidden />
+                  View through camera
+                </button>
               ) : (
                 <p className="max-w-[55%] text-right text-xs text-menu-ink-muted">
-                  Drag to rotate. Placing it on your table needs a recent Android phone or a
-                  headset.{' '}
+                  Drag to rotate. This browser can&apos;t show the dish through a camera.{' '}
                   <Link
                     href="/help#ar-devices"
                     className="rounded-sm text-menu-ink underline underline-offset-2 hover:decoration-2"
