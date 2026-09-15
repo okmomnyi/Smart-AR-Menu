@@ -1,6 +1,12 @@
 /**
  * A guest who taps "View at real size" gets feedback immediately, instead of
  * the menu sitting unchanged while the server looks up the dish.
+ *
+ * The trade-off: a loading boundary streams the page, so a dish that no longer
+ * exists renders the not-found page with HTTP 200 rather than 404 (Next adds a
+ * noindex tag). That is acceptable here, where guests arrive by tapping inside
+ * the menu. The menu route itself has no loading boundary, because guests
+ * reach it from printed QR codes and a removed restaurant should answer 404.
  */
 export default function ARLoading() {
   return (
