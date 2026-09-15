@@ -16,6 +16,34 @@ interface ARViewerProps {
   slug: string
 }
 
+/**
+ * Turns a failed AR start into something a guest can act on, plus the raw
+ * browser error for whoever is debugging from a screenshot.
+ */
+function describeArFailure(err: unknown): { message: string; detail: string } {
+  const name = err instanceof DOMException || err instanceof Error ? err.name : 'Error'
+  const detail = err instanceof Error ? `${err.name}: ${err.message}` : String(err)
+  switch (name) {
+    case 'NotAllowedError':
+      return {
+        message: 'Camera access was declined or AR was cancelled. Allow the camera for this site, then tap again.',
+        detail,
+      }
+    case 'NotSupportedError':
+      return {
+        message:
+          'This phone could not start AR. Check that Google Play Services for AR is installed and up to date, then try again.',
+        detail,
+      }
+    case 'SecurityError':
+      return { message: 'AR has to start from a tap. Tap View on your table again.', detail }
+    case 'InvalidStateError':
+      return { message: 'An AR session is already open. Close it, then try again.', detail }
+    default:
+      return { message: 'AR could not start on this device. The 3D preview still works.', detail }
+  }
+}
+
 function prefersReducedMotion(): boolean {
   if (typeof window === 'undefined') return false
   return window.matchMedia('(prefers-reduced-motion: reduce)').matches
@@ -78,6 +106,7 @@ export default function ARViewer({ product, slug }: ARViewerProps) {
   const [imageFailed, setImageFailed] = useState(false)
   const [placed, setPlaced] = useState(false)
   const [arError, setArError] = useState('')
+  const [arErrorDetail, setArErrorDetail] = useState('')
 
   const sizes = product.sizes
   const selected = sizes[sizeIndex]
@@ -313,25 +342,34 @@ export default function ARViewer({ product, slug }: ARViewerProps) {
     if (!renderer || !xr || !overlayRef.current) return
 
     setArError('')
+    setArErrorDetail('')
+    let session: XRSession | null = null
     try {
-      const session = await xr.requestSession('immersive-ar', {
+      const active = await xr.requestSession('immersive-ar', {
         requiredFeatures: ['hit-test'],
         optionalFeatures: ['dom-overlay'],
         // Without a domOverlay root the entire control panel — price, sizes,
         // exit button — is invisible for the whole AR session.
         domOverlay: { root: overlayRef.current },
       })
+      session = active
 
-      sessionRef.current = session
+      sessionRef.current = active
       setMode('ar')
       setSurfaceFound(false)
       setPlaced(false)
 
-      await renderer.xr.setSession(session)
+      // three.js asks for a 'local-floor' reference space by default, and a
+      // phone only grants that when it was requested with the session. It was
+      // not, so on phones that enforce this the session opened and then failed
+      // straight away with a generic error. 'local' comes with every immersive
+      // session, and hit-test poses in it are all a table needs.
+      renderer.xr.setReferenceSpaceType('local')
+      await renderer.xr.setSession(active)
 
-      const viewerSpace = await session.requestReferenceSpace('viewer')
+      const viewerSpace = await active.requestReferenceSpace('viewer')
       hitTestSourceRef.current =
-        (await session.requestHitTestSource?.({ space: viewerSpace })) ?? null
+        (await active.requestHitTestSource?.({ space: viewerSpace })) ?? null
 
       if (modelRef.current) modelRef.current.visible = false
 
@@ -364,20 +402,22 @@ export default function ARViewer({ product, slug }: ARViewerProps) {
         setMode('orbit')
         setPlaced(false)
         setSurfaceFound(false)
-        session.removeEventListener('select', onSelect)
-        session.removeEventListener('end', onEnd)
+        active.removeEventListener('select', onSelect)
+        active.removeEventListener('end', onEnd)
       }
 
-      session.addEventListener('select', onSelect)
-      session.addEventListener('end', onEnd)
+      active.addEventListener('select', onSelect)
+      active.addEventListener('end', onEnd)
     } catch (err) {
+      // If the session opened but a later step failed, close it. A session
+      // left running blocks the next attempt with InvalidStateError.
+      if (session) await session.end().catch(() => undefined)
       setMode('orbit')
       sessionRef.current = null
-      setArError(
-        err instanceof DOMException && err.name === 'NotAllowedError'
-          ? 'Camera access was declined. AR needs the camera to find your table.'
-          : 'AR could not start on this device. The 3D preview below still works.'
-      )
+      const { message, detail } = describeArFailure(err)
+      console.error('AR start failed:', detail)
+      setArError(message)
+      setArErrorDetail(detail)
     }
   }, [])
 
@@ -568,7 +608,14 @@ export default function ARViewer({ product, slug }: ARViewerProps) {
           {arError && (
             <p role="alert" className="mt-3 flex items-start gap-1.5 text-sm text-critical-on">
               <AlertCircle size={14} className="mt-0.5 shrink-0" aria-hidden />
-              {arError}
+              <span>
+                {arError}
+                {arErrorDetail && (
+                  <span className="mt-1 block font-mono text-2xs text-menu-ink-subtle">
+                    {arErrorDetail}
+                  </span>
+                )}
+              </span>
             </p>
           )}
 
