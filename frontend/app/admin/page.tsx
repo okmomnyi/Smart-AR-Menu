@@ -1,211 +1,140 @@
 'use client'
 
-import React, { useState, useEffect } from 'react'
+import React, { useEffect, useId, useState } from 'react'
+import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { AuthProvider, useAuth } from '../../lib/auth'
+import { AlertCircle } from 'lucide-react'
+import PasswordInput from '../../components/PasswordInput'
+import { useAuth } from '../../lib/auth'
+import { ApiError } from '../../lib/api'
+import BrandMark from '../../components/BrandMark'
 
-function LoginForm() {
+export default function AdminLoginPage() {
   const { signIn, user, loading } = useAuth()
   const router = useRouter()
+  const emailId = useId()
+  const passwordId = useId()
+  const errorId = useId()
 
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
-  const [showPassword, setShowPassword] = useState(false)
 
   useEffect(() => {
-    if (!loading && user) {
-      router.replace('/admin/dashboard')
-    }
+    if (!loading && user) router.replace('/admin/dashboard')
   }, [user, loading, router])
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault()
+  async function handleSubmit(event: React.FormEvent) {
+    event.preventDefault()
     setError('')
     setSubmitting(true)
     try {
       await signIn(email, password)
       router.replace('/admin/dashboard')
-    } catch (err: unknown) {
-      const code = (err as { code?: string })?.code
-      if (code === 'auth/invalid-credential' || code === 'auth/wrong-password' || code === 'auth/user-not-found') {
-        setError('Invalid email or password')
-      } else if (code === 'auth/too-many-requests') {
-        setError('Too many attempts. Please try again later.')
-      } else {
-        setError('Sign in failed. Please check your credentials.')
-      }
-    } finally {
+    } catch (err) {
+      setError(
+        err instanceof ApiError
+          ? err.message
+          : 'Could not reach the server. Check your connection and try again.'
+      )
       setSubmitting(false)
     }
   }
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center" style={{ background: '#0E0C0A' }}>
-        <div className="w-8 h-8 rounded-full border-2 border-t-transparent animate-spin" style={{ borderColor: '#D4820A', borderTopColor: 'transparent' }} />
+      <div className="flex min-h-screen items-center justify-center bg-menu-bg">
+        <span className="spinner spinner-lg" style={{ color: '#D4820A' }} aria-hidden="true" />
+        <span className="sr-only">Checking your session</span>
       </div>
     )
   }
 
   return (
-    <div
-      className="min-h-screen flex items-center justify-center px-4"
-      style={{ background: '#0E0C0A' }}
+    <main
+      id="main" tabIndex={-1}
+      className="on-dark relative flex min-h-screen items-center justify-center bg-menu-bg px-4 py-12"
     >
-      {/* Background texture */}
       <div
-        className="fixed inset-0 pointer-events-none"
+        className="pointer-events-none fixed inset-0"
+        aria-hidden="true"
         style={{
-          background: 'radial-gradient(ellipse at 30% 20%, rgba(212,130,10,0.06) 0%, transparent 60%), radial-gradient(ellipse at 70% 80%, rgba(61,43,31,0.15) 0%, transparent 60%)',
+          background:
+            'radial-gradient(ellipse at 30% 20%, rgba(212,130,10,0.07) 0%, transparent 60%), radial-gradient(ellipse at 70% 80%, rgba(61,43,31,0.18) 0%, transparent 60%)',
         }}
       />
 
-      <div className="w-full max-w-sm relative">
-        {/* Logo */}
-        <div className="text-center mb-8">
-          <div
-            className="w-16 h-16 rounded-2xl mx-auto mb-4 flex items-center justify-center text-2xl font-bold text-white"
-            style={{ background: 'linear-gradient(135deg, #D4820A, #F0A830)' }}
-          >
-            AR
-          </div>
-          <h1
-            className="text-3xl font-black"
-            style={{ fontFamily: 'Playfair Display, serif', color: '#F5F0E8' }}
-          >
-            AR Menu
-          </h1>
-          <p className="text-sm mt-1" style={{ color: '#8A7D70', fontFamily: 'DM Sans, sans-serif' }}>
-            Restaurant Admin Panel
-          </p>
+      <div className="relative w-full max-w-sm">
+        <div className="mb-8 text-center">
+          <BrandMark className="mx-auto mb-4" size={56} />
+          <h1 className="font-display text-3xl font-black text-menu-ink">AR Menu</h1>
+          <p className="mt-1 text-sm text-menu-ink-muted">Restaurant admin</p>
         </div>
 
-        {/* Card */}
-        <div
-          className="rounded-2xl p-8"
-          style={{
-            background: '#1A1814',
-            border: '1px solid rgba(255,255,255,0.06)',
-            boxShadow: '0 32px 64px rgba(0,0,0,0.4)',
-          }}
-        >
-          {/* Top accent */}
-          <div
-            className="h-0.5 rounded-full mb-6 -mt-0.5"
-            style={{ background: 'linear-gradient(90deg, #D4820A, #F0A830, transparent)' }}
-          />
-
-          <h2
-            className="text-xl font-bold mb-6"
-            style={{ fontFamily: 'Playfair Display, serif', color: '#F5F0E8' }}
-          >
-            Sign in
-          </h2>
+        <div className="rounded-2xl border border-menu-border bg-menu-surface p-8 shadow-menu-card">
+          <h2 className="mb-6 font-display text-xl font-bold text-menu-ink">Sign in</h2>
 
           {error && (
-            <div
-              className="mb-4 px-4 py-3 rounded-lg text-sm flex items-center gap-2"
-              style={{ background: 'rgba(193,75,30,0.12)', color: '#C14B1E', fontFamily: 'DM Sans, sans-serif' }}
-            >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" />
-              </svg>
-              {error}
+            <div id={errorId} role="alert" className="alert mb-4 bg-critical-wash text-critical-on">
+              <AlertCircle size={16} className="mt-0.5 shrink-0" aria-hidden="true" />
+              <span>{error}</span>
             </div>
           )}
 
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div>
-              <label
-                className="block text-sm font-medium mb-1.5"
-                style={{ color: '#8A7D70', fontFamily: 'DM Sans, sans-serif' }}
-              >
+          <form onSubmit={handleSubmit} noValidate>
+            <div className="mb-4">
+              <label htmlFor={emailId} className="label text-menu-ink">
                 Email
               </label>
               <input
+                id={emailId}
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                placeholder="admin@yourrestaurant.com"
+                placeholder="you@yourrestaurant.com"
                 required
-                className="dark-input"
                 autoComplete="email"
+                aria-describedby={error ? errorId : undefined}
+                className="field-dark"
               />
             </div>
 
-            <div>
-              <label
-                className="block text-sm font-medium mb-1.5"
-                style={{ color: '#8A7D70', fontFamily: 'DM Sans, sans-serif' }}
-              >
+            <div className="mb-6">
+              <label htmlFor={passwordId} className="label text-menu-ink">
                 Password
               </label>
-              <div className="relative">
-                <input
-                  type={showPassword ? 'text' : 'password'}
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="••••••••"
-                  required
-                  className="dark-input pr-10"
-                  autoComplete="current-password"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword((v) => !v)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2"
-                  style={{ color: '#8A7D70' }}
-                >
-                  {showPassword ? (
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94" />
-                      <path d="M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19" />
-                      <line x1="1" y1="1" x2="23" y2="23" />
-                    </svg>
-                  ) : (
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
-                      <circle cx="12" cy="12" r="3" />
-                    </svg>
-                  )}
-                </button>
-              </div>
+              <PasswordInput
+                tone="dark"
+                id={passwordId}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+                autoComplete="current-password"
+                aria-describedby={error ? errorId : undefined}
+              />
             </div>
 
-            <button
-              type="submit"
-              disabled={submitting}
-              className="btn-amber w-full py-3 text-base mt-2"
-            >
+            <button type="submit" disabled={submitting} className="btn btn-accent-dark w-full py-3">
               {submitting ? (
-                <span className="flex items-center gap-2 justify-center">
-                  <span className="w-4 h-4 rounded-full border-2 border-white/40 border-t-white animate-spin" />
+                <>
+                  <span className="spinner" style={{ width: '1rem', height: '1rem' }} aria-hidden="true" />
                   Signing in…
-                </span>
+                </>
               ) : (
-                'Sign In'
+                'Sign in'
               )}
             </button>
           </form>
         </div>
 
-        <p
-          className="text-center text-xs mt-6"
-          style={{ color: 'rgba(255,255,255,0.2)', fontFamily: 'DM Sans, sans-serif' }}
-        >
-          Don&apos;t have an account? Contact your AR Menu provider.
+        <p className="mt-6 text-center text-sm text-menu-ink-muted">
+          New here?{' '}
+          <Link href="/admin/register" className="font-medium text-accent underline underline-offset-2">
+            Create a restaurant account
+          </Link>
         </p>
       </div>
-    </div>
-  )
-}
-
-export default function AdminLoginPage() {
-  return (
-    <AuthProvider>
-      <LoginForm />
-    </AuthProvider>
+    </main>
   )
 }

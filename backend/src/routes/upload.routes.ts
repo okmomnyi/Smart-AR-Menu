@@ -1,38 +1,15 @@
-import { Router, Request, Response, NextFunction } from 'express'
-import { verifyToken } from '../middleware/auth'
-import { uploadImage as imageMiddleware, uploadModel as modelMiddleware } from '../middleware/upload'
-import { uploadImage, uploadModel } from '../controllers/upload.controller'
+import { Router } from 'express'
+import { asyncHandler } from '../lib/async'
+import { requireAuth } from '../middleware/auth'
+import { uploadImage as imageUpload, uploadModel as modelUpload } from '../middleware/upload'
+import { uploadImage, uploadModel, usage } from '../controllers/upload.controller'
 
 const router = Router()
 
-router.post(
-  '/image',
-  verifyToken,
-  (req: Request, res: Response, next: NextFunction) => {
-    imageMiddleware(req, res, (err) => {
-      if (err) {
-        res.status(400).json({ error: err.message })
-        return
-      }
-      next()
-    })
-  },
-  uploadImage
-)
+router.use(requireAuth)
 
-router.post(
-  '/model',
-  verifyToken,
-  (req: Request, res: Response, next: NextFunction) => {
-    modelMiddleware(req, res, (err) => {
-      if (err) {
-        res.status(400).json({ error: err.message })
-        return
-      }
-      next()
-    })
-  },
-  uploadModel
-)
+router.get('/usage', asyncHandler(usage))
+router.post('/image', imageUpload, asyncHandler(uploadImage))
+router.post('/model', modelUpload, asyncHandler(uploadModel))
 
 export default router

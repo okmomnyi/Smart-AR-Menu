@@ -1,177 +1,230 @@
 'use client'
 
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useId, useRef, useState } from 'react'
 import Image from 'next/image'
 import QRCode from 'qrcode'
-import { AuthProvider, ProtectedRoute, useAuth } from '../../../lib/auth'
+import { Upload, Download, Check, AlertCircle, ExternalLink } from 'lucide-react'
+import { ProtectedRoute, useAuth } from '../../../lib/auth'
 import AdminLayout from '../../../components/AdminLayout'
-import { updateRestaurant, uploadImage } from '../../../lib/api'
+import PasswordInput from '../../../components/PasswordInput'
+import CopyButton from '../../../components/CopyButton'
+import { updateRestaurant, uploadImage, changePassword, type Restaurant } from '../../../lib/api'
 
+const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000'
+
+// Contrast of white text on the given hex, per WCAG. A restaurant can pick any
+// brand colour, but if buttons on their menu become unreadable they should be
+// told before their guests find out.
+function contrastWithWhite(hex: string): number {
+  const value = hex.replace('#', '')
+  const full =
+    value.length === 3
+      ? value
+          .split('')
+          .map((c) => c + c)
+          .join('')
+      : value
+  if (full.length !== 6) return 21
+
+  const channel = (pair: string) => {
+    const srgb = Number.parseInt(pair, 16) / 255
+    return srgb <= 0.03928 ? srgb / 12.92 : ((srgb + 0.055) / 1.055) ** 2.4
+  }
+
+  const luminance =
+    0.2126 * channel(full.slice(0, 2)) +
+    0.7152 * channel(full.slice(2, 4)) +
+    0.0722 * channel(full.slice(4, 6))
+
+  return 1.05 / (luminance + 0.05)
+}
+
+/**
+ * Waits for the restaurant to load, then mounts the form keyed by its id so
+ * the fields initialise straight from it. Copying those values into state
+ * inside an effect meant the form re-rendered twice on every load and could
+ * clobber a half-typed edit if the context refreshed underneath it.
+ */
 function BrandingContent() {
-  const { userRecord, getToken } = useAuth()
+  const { restaurant } = useAuth()
+
+  if (!restaurant) {
+    return (
+      <div className="max-w-xl space-y-6">
+        <div className="skeleton h-10 w-48 rounded-xl" />
+        <div className="skeleton h-80 rounded-xl" />
+        <span className="sr-only" role="status">
+          Loading your branding settings
+        </span>
+      </div>
+    )
+  }
+
+  return <BrandingForm key={restaurant.id} restaurant={restaurant} />
+}
+
+function BrandingForm({ restaurant }: { restaurant: Restaurant }) {
+  const { user, setRestaurant } = useAuth()
   const logoInputRef = useRef<HTMLInputElement>(null)
   const qrCanvasRef = useRef<HTMLCanvasElement>(null)
+  const nameId = useId()
+  const colorId = useId()
 
-  const [name, setName] = useState('')
-  const [themeColor, setThemeColor] = useState('#D4820A')
-  const [logoUrl, setLogoUrl] = useState<string>('')
+  const [name, setName] = useState(restaurant.name)
+  const [themeColor, setThemeColor] = useState(restaurant.theme_color || '#D4820A')
+  const [logoUrl, setLogoUrl] = useState(restaurant.logo_url ?? '')
   const [saving, setSaving] = useState(false)
   const [uploadingLogo, setUploadingLogo] = useState(false)
-  const [saveSuccess, setSaveSuccess] = useState(false)
+  const [saved, setSaved] = useState(false)
   const [error, setError] = useState('')
-  const [qrGenerated, setQrGenerated] = useState(false)
+
+  const [currentPassword, setCurrentPassword] = useState('')
+  const [newPassword, setNewPassword] = useState('')
+  const [passwordSaving, setPasswordSaving] = useState(false)
+  const [passwordError, setPasswordError] = useState('')
+  const [passwordSaved, setPasswordSaved] = useState(false)
+
+
+  const menuUrl = `${APP_URL}/r/${restaurant.slug}`
 
   useEffect(() => {
-    if (userRecord?.restaurant) {
-      setName(userRecord.restaurant.name)
-      setThemeColor(userRecord.restaurant.theme_color ?? '#D4820A')
-      setLogoUrl(userRecord.restaurant.logo_url ?? '')
-    }
-  }, [userRecord])
+    if (!qrCanvasRef.current || !menuUrl) return
+    void QRCode.toCanvas(qrCanvasRef.current, menuUrl, {
+      width: 280,
+      margin: 2,
+      color: { dark: '#1A1814', light: '#F5F0E8' },
+    })
+  }, [menuUrl])
 
-  async function handleLogoUpload(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0]
-    if (!file || !userRecord) return
+  async function handleLogoUpload(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (!file) return
     setUploadingLogo(true)
+    setError('')
     try {
-      const token = await getToken()
-      const { url } = await uploadImage(userRecord.restaurant_id, file, token)
+      const { url } = await uploadImage(file)
       setLogoUrl(url)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Logo upload failed')
+      setError(err instanceof Error ? err.message : 'That logo could not be uploaded.')
     } finally {
       setUploadingLogo(false)
     }
   }
 
-  async function handleSave(e: React.FormEvent) {
-    e.preventDefault()
-    if (!userRecord) return
+  async function handleSave(event: React.FormEvent) {
+    event.preventDefault()
+    if (!user) return
     setSaving(true)
     setError('')
-    setSaveSuccess(false)
+    setSaved(false)
     try {
-      const token = await getToken()
-      await updateRestaurant(
-        userRecord.restaurant_id,
-        { name: name.trim(), theme_color: themeColor, logo_url: logoUrl || null },
-        token
-      )
-      setSaveSuccess(true)
-      setTimeout(() => setSaveSuccess(false), 3000)
+      const updated = await updateRestaurant(user.restaurant_id, {
+        name: name.trim(),
+        theme_color: themeColor,
+        logo_url: logoUrl || null,
+      })
+      // Push the result back into context so the sidebar name updates without
+      // a page reload.
+      setRestaurant(updated)
+      setSaved(true)
+      window.setTimeout(() => setSaved(false), 4000)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save settings')
+      setError(err instanceof Error ? err.message : 'Those settings could not be saved.')
     } finally {
       setSaving(false)
     }
   }
 
-  async function generateQR() {
-    if (!qrCanvasRef.current || !userRecord) return
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'https://yourdomain.com'
-    const url = `${appUrl}/r/${userRecord.restaurant.slug}`
-    await QRCode.toCanvas(qrCanvasRef.current, url, {
-      width: 300,
-      margin: 3,
-      color: {
-        dark: '#1A1814',
-        light: '#F5F0E8',
-      },
-    })
-    setQrGenerated(true)
+  async function handlePasswordChange(event: React.FormEvent) {
+    event.preventDefault()
+    setPasswordError('')
+    setPasswordSaved(false)
+
+    if (newPassword.length < 12) {
+      setPasswordError('Your new password must be at least 12 characters.')
+      return
+    }
+
+    setPasswordSaving(true)
+    try {
+      await changePassword(currentPassword, newPassword)
+      setCurrentPassword('')
+      setNewPassword('')
+      setPasswordSaved(true)
+      window.setTimeout(() => setPasswordSaved(false), 5000)
+    } catch (err) {
+      setPasswordError(err instanceof Error ? err.message : 'That password could not be changed.')
+    } finally {
+      setPasswordSaving(false)
+    }
   }
 
   function downloadQR() {
-    if (!qrCanvasRef.current) return
+    const canvas = qrCanvasRef.current
+    if (!canvas || !restaurant) return
     const link = document.createElement('a')
-    link.download = `${userRecord?.restaurant.slug ?? 'qr'}-menu-qr.png`
-    link.href = qrCanvasRef.current.toDataURL('image/png')
+    link.download = `${restaurant.slug}-menu-qr.png`
+    link.href = canvas.toDataURL('image/png')
     link.click()
   }
 
-  const inputStyle: React.CSSProperties = {
-    width: '100%',
-    background: 'white',
-    border: '1px solid rgba(61,43,31,0.2)',
-    borderRadius: '0.5rem',
-    padding: '0.625rem 0.875rem',
-    fontFamily: 'DM Sans, sans-serif',
-    fontSize: '0.875rem',
-    color: '#1A1814',
-    outline: 'none',
-  }
-
-  const labelStyle: React.CSSProperties = {
-    display: 'block',
-    fontSize: '0.8125rem',
-    fontWeight: 500,
-    color: '#3D2B1F',
-    marginBottom: '0.375rem',
-    fontFamily: 'DM Sans, sans-serif',
-  }
+  const ratio = contrastWithWhite(themeColor)
+  const lowContrast = ratio < 4.5
 
   return (
     <div className="max-w-xl space-y-8">
       <div>
-        <h2 className="text-xl font-bold" style={{ fontFamily: 'Playfair Display, serif', color: '#1A1814' }}>
-          Restaurant Branding
-        </h2>
-        <p className="text-sm mt-1" style={{ color: '#8A7D70', fontFamily: 'DM Sans, sans-serif' }}>
-          Customize how your restaurant appears to customers
+        <h2 className="font-display text-xl font-bold text-ink">Branding</h2>
+        <p className="mt-1 text-sm text-ink-muted">
+          How your restaurant appears to guests who scan your code.
         </p>
       </div>
 
-      {/* Settings form */}
       <form
         onSubmit={handleSave}
-        className="rounded-xl p-6 space-y-5"
-        style={{ background: 'white', border: '1px solid rgba(61,43,31,0.08)', boxShadow: '0 1px 8px rgba(61,43,31,0.06)' }}
+        className="space-y-5 rounded-xl border border-line bg-surface-card p-6 shadow-card"
       >
         {error && (
-          <div
-            className="px-4 py-3 rounded-lg text-sm"
-            style={{ background: 'rgba(193,75,30,0.08)', color: '#C14B1E', fontFamily: 'DM Sans, sans-serif' }}
-          >
-            {error}
+          <div role="alert" className="alert alert-error">
+            <AlertCircle size={16} className="mt-0.5 shrink-0" aria-hidden />
+            <span>{error}</span>
           </div>
         )}
-        {saveSuccess && (
-          <div
-            className="px-4 py-3 rounded-lg text-sm flex items-center gap-2"
-            style={{ background: 'rgba(107,124,94,0.12)', color: '#6B7C5E', fontFamily: 'DM Sans, sans-serif' }}
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-              <polyline points="20 6 9 17 4 12" />
-            </svg>
-            Settings saved!
+        {saved && (
+          <div role="status" className="alert alert-success">
+            <Check size={16} className="mt-0.5 shrink-0" aria-hidden />
+            <span>Saved. Your menu updates for guests within a minute.</span>
           </div>
         )}
 
-        {/* Logo */}
         <div>
-          <label style={labelStyle}>Restaurant Logo</label>
+          <span className="label">Logo</span>
           <input
             ref={logoInputRef}
             type="file"
             accept=".jpg,.jpeg,.png,.webp"
-            className="hidden"
+            className="sr-only"
             onChange={handleLogoUpload}
           />
           <div className="flex items-center gap-4">
-            <div
-              className="relative w-20 h-20 rounded-xl overflow-hidden flex-shrink-0"
-              style={{ background: '#F4F1ED', border: '2px dashed rgba(61,43,31,0.15)' }}
-            >
+            <div className="relative h-16 w-16 shrink-0 overflow-hidden rounded-full bg-surface-sunken">
               {logoUrl ? (
-                <Image src={logoUrl} alt="Logo" fill className="object-cover" />
+                <Image
+                  src={logoUrl}
+                  alt={`${name || 'Restaurant'} logo`}
+                  fill
+                  sizes="64px"
+                  className="object-cover"
+                />
               ) : (
-                <div className="w-full h-full flex items-center justify-center">
-                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#C8BEB5" strokeWidth="1.5">
-                    <rect x="3" y="3" width="18" height="18" rx="2" />
-                    <circle cx="8.5" cy="8.5" r="1.5" />
-                    <path d="M21 15l-5-5L5 21" />
-                  </svg>
-                </div>
+                <span
+                  className="flex h-full w-full items-center justify-center font-display text-xl font-bold text-white"
+                  style={{ background: themeColor }}
+                  aria-hidden
+                >
+                  {(name || 'A').charAt(0).toUpperCase()}
+                </span>
               )}
             </div>
             <div>
@@ -179,173 +232,210 @@ function BrandingContent() {
                 type="button"
                 onClick={() => logoInputRef.current?.click()}
                 disabled={uploadingLogo}
-                className="px-4 py-2 rounded-lg text-sm font-medium border transition-colors"
-                style={{
-                  fontFamily: 'DM Sans, sans-serif',
-                  borderColor: 'rgba(61,43,31,0.2)',
-                  color: '#3D2B1F',
-                  background: 'transparent',
-                }}
+                className="btn btn-secondary"
               >
-                {uploadingLogo ? 'Uploading…' : logoUrl ? 'Change Logo' : 'Upload Logo'}
+                {uploadingLogo ? (
+                  <>
+                    <span className="spinner" style={{ width: 16, height: 16 }} aria-hidden />
+                    Uploading…
+                  </>
+                ) : (
+                  <>
+                    <Upload size={16} aria-hidden />
+                    {logoUrl ? 'Replace logo' : 'Upload logo'}
+                  </>
+                )}
               </button>
-              <p className="text-xs mt-1" style={{ color: '#8A7D70' }}>PNG, JPG or WebP · Recommended: 200×200</p>
+              {logoUrl && (
+                <button
+                  type="button"
+                  onClick={() => setLogoUrl('')}
+                  className="ml-2 rounded-md text-sm font-medium text-critical"
+                >
+                  Remove
+                </button>
+              )}
+              <p className="mt-1.5 text-xs text-ink-muted">Square works best. Up to 10 MB.</p>
             </div>
           </div>
         </div>
 
-        {/* Name */}
         <div>
-          <label style={labelStyle}>Restaurant Name</label>
+          <label htmlFor={nameId} className="label">
+            Restaurant name
+          </label>
           <input
-            style={inputStyle}
+            id={nameId}
+            className="field"
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="My Restaurant"
+            maxLength={80}
             required
           />
         </div>
 
-        {/* Theme color */}
         <div>
-          <label style={labelStyle}>Accent Color</label>
+          <label htmlFor={colorId} className="label">
+            Accent colour
+          </label>
           <div className="flex items-center gap-3">
             <input
+              id={colorId}
               type="color"
               value={themeColor}
               onChange={(e) => setThemeColor(e.target.value)}
-              className="w-12 h-10 rounded-lg cursor-pointer border-0 p-0.5"
-              style={{ background: 'white', border: '1px solid rgba(61,43,31,0.2)' }}
+              className="h-10 w-14 cursor-pointer rounded-md border border-line-strong bg-surface-card p-1"
+            />
+            <input
+              className="field w-32 font-mono"
+              value={themeColor}
+              onChange={(e) => setThemeColor(e.target.value)}
+              aria-label="Accent colour hex value"
+              pattern="^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$"
+              maxLength={7}
             />
             <span
-              className="px-3 py-2 rounded-lg text-sm"
-              style={{
-                background: 'rgba(61,43,31,0.04)',
-                color: '#3D2B1F',
-                fontFamily: 'Space Mono, monospace',
-                border: '1px solid rgba(61,43,31,0.1)',
-              }}
+              className="rounded-full px-4 py-2 text-sm font-medium text-white"
+              style={{ background: themeColor }}
             >
-              {themeColor}
+              Preview
             </span>
-            <div
-              className="w-8 h-8 rounded-full"
-              style={{ background: themeColor, border: '2px solid rgba(0,0,0,0.08)' }}
-            />
           </div>
-          <p className="text-xs mt-1" style={{ color: '#8A7D70' }}>
-            Used for buttons and accents in the customer-facing menu
-          </p>
+          {lowContrast && (
+            <p className="mt-2 flex items-start gap-1.5 text-xs text-critical">
+              <AlertCircle size={14} className="mt-0.5 shrink-0" aria-hidden />
+              White text on this colour reads at {ratio.toFixed(1)}:1, below the 4.5:1 needed
+              for readable body text. A darker shade will be easier for guests to read.
+            </p>
+          )}
         </div>
 
-        <button
-          type="submit"
-          disabled={saving}
-          className="btn-amber w-full py-3 text-sm"
-        >
-          {saving ? (
-            <span className="flex items-center gap-2 justify-center">
-              <span className="w-4 h-4 rounded-full border-2 border-white/40 border-t-white animate-spin" />
-              Saving…
-            </span>
-          ) : (
-            'Save Settings'
-          )}
-        </button>
+        <div className="flex justify-end border-t border-line pt-4">
+          <button type="submit" disabled={saving} className="btn btn-primary">
+            {saving ? (
+              <>
+                <span className="spinner" style={{ width: 16, height: 16 }} aria-hidden />
+                Saving…
+              </>
+            ) : (
+              'Save changes'
+            )}
+          </button>
+        </div>
       </form>
 
-      {/* QR Code */}
-      <div
-        className="rounded-xl p-6 space-y-4"
-        style={{ background: 'white', border: '1px solid rgba(61,43,31,0.08)', boxShadow: '0 1px 8px rgba(61,43,31,0.06)' }}
+      <section className="rounded-xl border border-line bg-surface-card p-6 shadow-card">
+        <h3 className="font-display text-lg font-bold text-ink">Your menu QR code</h3>
+        <p className="mt-1 text-sm text-ink-muted">
+          Print this for your tables. It opens your live menu, so it keeps working as you
+          change dishes.
+        </p>
+
+        <div className="mt-5 flex flex-col items-start gap-5 sm:flex-row">
+          <canvas
+            ref={qrCanvasRef}
+            className="shrink-0 rounded-xl border-4 border-surface-sunken"
+            aria-label="QR code linking to your public menu"
+          />
+          <div className="min-w-0 flex-1 space-y-3">
+            <p className="break-all rounded-lg bg-surface-sunken px-3 py-2 font-mono text-xs text-ink-muted">
+              {menuUrl}
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <button type="button" onClick={downloadQR} className="btn btn-primary">
+                <Download size={16} aria-hidden />
+                Download PNG
+              </button>
+              <CopyButton value={menuUrl} onError={setError} />
+              <a
+                href={menuUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="btn btn-secondary"
+              >
+                <ExternalLink size={16} aria-hidden />
+                Preview
+              </a>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <form
+        onSubmit={handlePasswordChange}
+        className="space-y-4 rounded-xl border border-line bg-surface-card p-6 shadow-card"
       >
         <div>
-          <h3 className="font-bold text-base mb-1" style={{ fontFamily: 'Playfair Display, serif', color: '#1A1814' }}>
-            Menu QR Code
-          </h3>
-          <p className="text-sm" style={{ color: '#8A7D70', fontFamily: 'DM Sans, sans-serif' }}>
-            Print and place on tables so customers can scan to view your AR menu
+          <h3 className="font-display text-lg font-bold text-ink">Change password</h3>
+          <p className="mt-1 text-sm text-ink-muted">
+            Changing it signs out every other device.
           </p>
         </div>
 
-        {userRecord && (
-          <div
-            className="text-xs px-3 py-2 rounded-lg flex items-center gap-2"
-            style={{ background: 'rgba(61,43,31,0.04)', color: '#8A7D70', fontFamily: 'Space Mono, monospace' }}
-          >
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71" />
-              <path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71" />
-            </svg>
-            {(process.env.NEXT_PUBLIC_APP_URL ?? 'https://yourdomain.com')}/r/{userRecord.restaurant.slug}
+        {passwordError && (
+          <div role="alert" className="alert alert-error">
+            <AlertCircle size={16} className="mt-0.5 shrink-0" aria-hidden />
+            <span>{passwordError}</span>
+          </div>
+        )}
+        {passwordSaved && (
+          <div role="status" className="alert alert-success">
+            <Check size={16} className="mt-0.5 shrink-0" aria-hidden />
+            <span>Password changed. Other devices have been signed out.</span>
           </div>
         )}
 
-        {/* QR Canvas */}
-        <div className="flex flex-col items-start gap-4">
-          <canvas
-            ref={qrCanvasRef}
-            className="rounded-xl"
-            style={{
-              display: qrGenerated ? 'block' : 'none',
-              border: '6px solid #F5F0E8',
-              boxShadow: '0 4px 16px rgba(61,43,31,0.12)',
-            }}
+        <div>
+          <label htmlFor="current-password" className="label">
+            Current password
+          </label>
+          <PasswordInput
+            id="current-password"
+            value={currentPassword}
+            onChange={(e) => setCurrentPassword(e.target.value)}
+            autoComplete="current-password"
+            required
           />
-
-          {!qrGenerated && (
-            <div
-              className="w-[300px] h-[300px] rounded-xl flex items-center justify-center"
-              style={{ background: '#F5F0E8', border: '2px dashed rgba(61,43,31,0.15)' }}
-            >
-              <p className="text-sm" style={{ color: '#8A7D70', fontFamily: 'DM Sans, sans-serif' }}>
-                Click generate to create QR
-              </p>
-            </div>
-          )}
-
-          <div className="flex gap-3">
-            <button
-              type="button"
-              onClick={generateQR}
-              className="px-5 py-2.5 rounded-full text-sm font-medium border transition-colors"
-              style={{
-                borderColor: 'rgba(61,43,31,0.2)',
-                color: '#3D2B1F',
-                fontFamily: 'DM Sans, sans-serif',
-              }}
-            >
-              {qrGenerated ? 'Regenerate QR' : 'Generate QR'}
-            </button>
-            {qrGenerated && (
-              <button
-                type="button"
-                onClick={downloadQR}
-                className="btn-amber px-5 py-2.5 text-sm"
-              >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                  <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
-                  <polyline points="7 10 12 15 17 10" />
-                  <line x1="12" y1="15" x2="12" y2="3" />
-                </svg>
-                Download PNG
-              </button>
-            )}
-          </div>
         </div>
-      </div>
+
+        <div>
+          <label htmlFor="new-password" className="label">
+            New password
+          </label>
+          <PasswordInput
+            id="new-password"
+            value={newPassword}
+            onChange={(e) => setNewPassword(e.target.value)}
+            autoComplete="new-password"
+            minLength={12}
+            required
+            aria-describedby="new-password-hint"
+          />
+          <p id="new-password-hint" className="mt-1.5 text-xs text-ink-muted">
+            At least 12 characters.
+          </p>
+        </div>
+
+        <div className="flex justify-end border-t border-line pt-4">
+          <button
+            type="submit"
+            disabled={passwordSaving || !currentPassword || !newPassword}
+            className="btn btn-primary"
+          >
+            {passwordSaving ? 'Changing…' : 'Change password'}
+          </button>
+        </div>
+      </form>
     </div>
   )
 }
 
 export default function BrandingPage() {
   return (
-    <AuthProvider>
-      <ProtectedRoute>
-        <AdminLayout title="Branding">
-          <BrandingContent />
-        </AdminLayout>
-      </ProtectedRoute>
-    </AuthProvider>
+    <ProtectedRoute>
+      <AdminLayout title="Branding">
+        <BrandingContent />
+      </AdminLayout>
+    </ProtectedRoute>
   )
 }

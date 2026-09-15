@@ -45,11 +45,26 @@ postgres_data/
 *.cert
 
 # ── Claude AI ─────────────────────────────────────────────────────────────────
-.claude/
 
-# ── Public / uploaded assets ──────────────────────────────────────────────────
-**/public/
+# ── Local scratch ─────────────────────────────────────────────────────────────
+# frontend/public is tracked for static assets, but not the sample 3D models.
+# They are Khronos glTF samples used only by the local seed, several carry
+# attribution licences, and at 30 MB they would bloat the history for good.
+# Production gets real models through uploads.
+frontend/public/uploads/
+frontend/public/models/
 
 # ── Additional env files ──────────────────────────────────────────────────────
 .env.development
 .env.test
+# Local copies of real env files made while switching configurations.
+*.backup
+.env.*.backup
+
+# Build info
+*.tsbuildinfo
+
+# ── Claude Code ───────────────────────────────────────────────────────────────
+# Shared project settings are worth committing; the .local file holds
+# machine-specific permission grants and absolute paths, so it is not.
+.claude/settings.local.json

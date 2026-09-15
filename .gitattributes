@@ -1,0 +1,5 @@
+# Shell scripts run inside Linux containers. A Windows checkout with CRLF
+# endings would fail at start-up with "/bin/sh^M: not found".
+*.sh text eol=lf
+Dockerfile text eol=lf
+*.yml text eol=lf

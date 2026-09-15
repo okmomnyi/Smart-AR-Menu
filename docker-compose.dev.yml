@@ -1,11 +1,10 @@
-version: '3.9'
+name: ar-menu-dev
 
-# Development compose — spins up only PostgreSQL so you can run
-# backend and frontend locally with `npm run dev`.
+# Development: PostgreSQL only. Run the backend and frontend with `npm run dev`
+# so you keep hot reload.
 #
-# Usage:
 #   docker compose -f docker-compose.dev.yml up -d
-#   cd backend && npm run dev
+#   cd backend  && npm run db:migrate && npm run db:seed && npm run dev
 #   cd frontend && npm run dev
 
 services:

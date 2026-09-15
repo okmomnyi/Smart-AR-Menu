@@ -1,273 +1,285 @@
 'use client'
 
-import React, { useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
 import Image from 'next/image'
-import { AuthProvider, ProtectedRoute, useAuth } from '../../../lib/auth'
+import {
+  UtensilsCrossed,
+  CheckCircle2,
+  Box,
+  ListOrdered,
+  ChevronRight,
+  AlertCircle,
+  ImageOff,
+  HardDrive,
+} from 'lucide-react'
+import { ProtectedRoute, useAuth } from '../../../lib/auth'
 import AdminLayout from '../../../components/AdminLayout'
-import { getProducts, getCategories, Product } from '../../../lib/api'
+import {
+  getProducts,
+  getCategories,
+  getStorageUsage,
+  type Product,
+  type StorageUsage,
+} from '../../../lib/api'
 
-interface StatCardProps {
+function StatCard({
+  label,
+  value,
+  Icon,
+  tone,
+}: {
   label: string
-  value: string | number
-  icon: React.ReactNode
-  color: string
-}
+  value: number | string
+  Icon: React.ComponentType<{ size?: number; className?: string; 'aria-hidden'?: boolean }>
+  tone: 'accent' | 'positive' | 'critical' | 'neutral'
+}) {
+  const tones = {
+    accent: 'bg-accent-wash text-accent-deep',
+    positive: 'bg-positive-wash text-positive',
+    critical: 'bg-critical-wash text-critical',
+    neutral: 'bg-surface-sunken text-ink-muted',
+  } as const
 
-function StatCard({ label, value, icon, color }: StatCardProps) {
   return (
-    <div
-      className="rounded-xl p-5 flex items-center gap-4"
-      style={{ background: 'white', border: '1px solid rgba(61,43,31,0.08)', boxShadow: '0 1px 8px rgba(61,43,31,0.06)' }}
-    >
-      <div
-        className="w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0"
-        style={{ background: color }}
-      >
-        {icon}
+    <div className="flex items-center gap-4 rounded-xl border border-line bg-surface-card p-5 shadow-card">
+      <div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-xl ${tones[tone]}`}>
+        <Icon size={22} aria-hidden />
       </div>
-      <div>
-        <p
-          className="text-2xl font-bold"
-          style={{ fontFamily: 'Space Mono, monospace', color: '#1A1814' }}
-        >
-          {value}
-        </p>
-        <p
-          className="text-sm"
-          style={{ color: '#8A7D70', fontFamily: 'DM Sans, sans-serif' }}
-        >
-          {label}
-        </p>
+      <div className="min-w-0">
+        <p className="font-mono text-2xl font-bold text-ink">{value}</p>
+        <p className="text-sm text-ink-muted">{label}</p>
       </div>
     </div>
   )
 }
 
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 ** 2) return `${(bytes / 1024).toFixed(0)} KB`
+  if (bytes < 1024 ** 3) return `${(bytes / 1024 ** 2).toFixed(1)} MB`
+  return `${(bytes / 1024 ** 3).toFixed(2)} GB`
+}
+
 function DashboardContent() {
-  const { userRecord, getToken } = useAuth()
+  const { user, restaurant } = useAuth()
   const [products, setProducts] = useState<Product[]>([])
   const [categoryCount, setCategoryCount] = useState(0)
-  const [loadingStats, setLoadingStats] = useState(true)
+  const [usage, setUsage] = useState<StorageUsage | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
 
-  useEffect(() => {
-    if (!userRecord) return
-    async function load() {
-      try {
-        const token = await getToken()
-        const [prods, cats] = await Promise.all([
-          getProducts(userRecord!.restaurant_id, token),
-          getCategories(userRecord!.restaurant_id, token),
-        ])
-        setProducts(prods)
-        setCategoryCount(cats.length)
-      } catch {
-        // show zeros
-      } finally {
-        setLoadingStats(false)
-      }
+  const load = useCallback(async () => {
+    if (!user) return
+    try {
+      const [prods, cats, storage] = await Promise.all([
+        getProducts(user.restaurant_id),
+        getCategories(user.restaurant_id),
+        getStorageUsage().catch(() => null),
+      ])
+      setProducts(prods)
+      setCategoryCount(cats.length)
+      setUsage(storage)
+      // Cleared only once there is something to replace it with, so a retry
+      // does not blank the message before it is known to have worked.
+      setError('')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not load your dashboard.')
+    } finally {
+      setLoading(false)
     }
-    load()
-  }, [userRecord, getToken])
+  }, [user])
 
-  const totalProducts = products.length
-  const activeProducts = products.filter((p) => p.active).length
-  const pendingModels = products.filter((p) => p.active && !p.model_url).length
-  const recentProducts = products.slice(0, 5)
+  // Client-side fetch on mount. The rule steers towards a data library or a
+  // server component; neither fits here, because this page needs the client
+  // auth state to know which restaurant to ask for. Every setState in load()
+  // happens after an await, so there is no synchronous cascading render.
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void load()
+  }, [load])
+
+  const activeProducts = products.filter((p) => p.active)
+  const missingModels = activeProducts.filter((p) => !p.model_url).length
+  const recent = products.slice(0, 5)
+
+  if (loading) {
+    return (
+      <div className="space-y-6">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          {[0, 1, 2, 3].map((i) => (
+            <div key={i} className="skeleton h-24 rounded-xl" />
+          ))}
+        </div>
+        <div className="skeleton h-64 rounded-xl" />
+        <span className="sr-only" role="status">
+          Loading dashboard
+        </span>
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className="rounded-xl border border-line bg-surface-card p-8 text-center shadow-card">
+        <AlertCircle size={28} className="mx-auto mb-3 text-critical" aria-hidden />
+        <h2 className="font-display text-lg font-bold text-ink">Could not load your dashboard</h2>
+        <p className="mx-auto mt-2 max-w-sm text-sm text-ink-muted">{error}</p>
+        <button type="button" onClick={() => void load()} className="btn btn-primary mt-5">
+          Try again
+        </button>
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-6">
-      {/* Welcome */}
       <div>
-        <h2
-          className="text-2xl font-bold"
-          style={{ fontFamily: 'Playfair Display, serif', color: '#1A1814' }}
-        >
-          Welcome back
+        <h2 className="font-display text-2xl font-bold text-ink">
+          {restaurant?.name ?? 'Your restaurant'}
         </h2>
-        <p className="text-sm mt-1" style={{ color: '#8A7D70', fontFamily: 'DM Sans, sans-serif' }}>
-          {userRecord?.restaurant?.name} · Admin
+        <p className="mt-1 text-sm text-ink-muted">
+          {activeProducts.length === 0
+            ? 'Your menu is empty. Add a product to get started.'
+            : `${activeProducts.length} ${activeProducts.length === 1 ? 'dish is' : 'dishes are'} live on your menu right now.`}
         </p>
       </div>
 
-      {/* Stats grid */}
-      {loadingStats ? (
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-          {[1, 2, 3, 4].map((i) => (
-            <div key={i} className="skeleton-admin rounded-xl h-24" />
-          ))}
-        </div>
-      ) : (
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-          <StatCard
-            label="Total Products"
-            value={totalProducts}
-            color="rgba(212,130,10,0.12)"
-            icon={
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#D4820A" strokeWidth="2">
-                <path d="M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4z" />
-                <line x1="3" y1="6" x2="21" y2="6" />
-                <path d="M16 10a4 4 0 01-8 0" />
-              </svg>
-            }
-          />
-          <StatCard
-            label="Active Products"
-            value={activeProducts}
-            color="rgba(107,124,94,0.12)"
-            icon={
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#6B7C5E" strokeWidth="2">
-                <polyline points="20 6 9 17 4 12" />
-              </svg>
-            }
-          />
-          <StatCard
-            label="Need 3D Model"
-            value={pendingModels}
-            color="rgba(193,75,30,0.1)"
-            icon={
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#C14B1E" strokeWidth="2">
-                <path d="M21 7.5V6a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-1.5" />
-                <path d="M7 7h10v10H7z" />
-              </svg>
-            }
-          />
-          <StatCard
-            label="Categories"
-            value={categoryCount}
-            color="rgba(61,43,31,0.08)"
-            icon={
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#3D2B1F" strokeWidth="2">
-                <line x1="8" y1="6" x2="21" y2="6" /><line x1="8" y1="12" x2="21" y2="12" />
-                <line x1="8" y1="18" x2="21" y2="18" /><line x1="3" y1="6" x2="3.01" y2="6" />
-                <line x1="3" y1="12" x2="3.01" y2="12" /><line x1="3" y1="18" x2="3.01" y2="18" />
-              </svg>
-            }
-          />
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <StatCard label="Total products" value={products.length} Icon={UtensilsCrossed} tone="accent" />
+        <StatCard label="Live on menu" value={activeProducts.length} Icon={CheckCircle2} tone="positive" />
+        <StatCard label="Missing a 3D model" value={missingModels} Icon={Box} tone={missingModels > 0 ? 'critical' : 'neutral'} />
+        <StatCard label="Categories" value={categoryCount} Icon={ListOrdered} tone="neutral" />
+      </div>
+
+      {usage && (
+        <div className="rounded-xl border border-line bg-surface-card p-5 shadow-card">
+          <div className="mb-3 flex items-center justify-between gap-4">
+            <div className="flex items-center gap-2">
+              <HardDrive size={16} className="text-ink-muted" aria-hidden />
+              <h3 className="text-sm font-semibold text-ink">Media storage</h3>
+            </div>
+            <p className="font-mono text-sm text-ink-muted">
+              {formatBytes(usage.used_bytes)} of {formatBytes(usage.quota_bytes)}
+            </p>
+          </div>
+          <div
+            className="h-2 overflow-hidden rounded-full bg-surface-sunken"
+            role="progressbar"
+            aria-valuenow={Math.round((usage.used_bytes / usage.quota_bytes) * 100)}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-label="Storage used"
+          >
+            <div
+              className="h-full rounded-full bg-accent-strong transition-[width] duration-500"
+              style={{
+                width: `${Math.min(100, (usage.used_bytes / usage.quota_bytes) * 100).toFixed(1)}%`,
+              }}
+            />
+          </div>
         </div>
       )}
 
-      {/* Quick actions */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         {[
           {
             href: '/admin/products',
-            title: 'Manage Products',
-            desc: 'Add, edit, and upload 3D models',
-            icon: (
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4z" />
-                <line x1="3" y1="6" x2="21" y2="6" />
-                <path d="M16 10a4 4 0 01-8 0" />
-              </svg>
-            ),
+            title: 'Manage products',
+            desc: 'Add dishes, upload photos and 3D models',
+            Icon: UtensilsCrossed,
           },
           {
             href: '/admin/categories',
-            title: 'Manage Categories',
-            desc: 'Organize your menu sections',
-            icon: (
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <line x1="8" y1="6" x2="21" y2="6" /><line x1="8" y1="12" x2="21" y2="12" />
-                <line x1="8" y1="18" x2="21" y2="18" />
-              </svg>
-            ),
+            title: 'Manage categories',
+            desc: 'Group and reorder your menu sections',
+            Icon: ListOrdered,
           },
-        ].map((action) => (
+        ].map(({ href, title, desc, Icon }) => (
           <Link
-            key={action.href}
-            href={action.href}
-            className="flex items-center gap-4 p-5 rounded-xl transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md"
-            style={{
-              background: 'white',
-              border: '1px solid rgba(61,43,31,0.08)',
-              textDecoration: 'none',
-              boxShadow: '0 1px 8px rgba(61,43,31,0.06)',
-            }}
+            key={href}
+            href={href}
+            className="flex items-center gap-4 rounded-xl border border-line bg-surface-card p-5 no-underline shadow-card transition-shadow hover:shadow-raised"
           >
-            <div
-              className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0"
-              style={{ background: 'rgba(212,130,10,0.1)', color: '#D4820A' }}
-            >
-              {action.icon}
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-accent-wash text-accent-deep">
+              <Icon size={20} aria-hidden />
             </div>
-            <div className="flex-1 min-w-0">
-              <p className="font-semibold text-sm" style={{ color: '#1A1814', fontFamily: 'DM Sans, sans-serif' }}>
-                {action.title}
-              </p>
-              <p className="text-xs" style={{ color: '#8A7D70', fontFamily: 'DM Sans, sans-serif' }}>
-                {action.desc}
-              </p>
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-semibold text-ink">{title}</p>
+              <p className="text-xs text-ink-muted">{desc}</p>
             </div>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#D4820A" strokeWidth="2">
-              <polyline points="9 18 15 12 9 6" />
-            </svg>
+            <ChevronRight size={16} className="text-ink-muted" aria-hidden />
           </Link>
         ))}
       </div>
 
-      {/* Recent products */}
-      {recentProducts.length > 0 && (
-        <div
-          className="rounded-xl overflow-hidden"
-          style={{ background: 'white', border: '1px solid rgba(61,43,31,0.08)', boxShadow: '0 1px 8px rgba(61,43,31,0.06)' }}
-        >
-          <div className="px-5 py-4 border-b flex items-center justify-between" style={{ borderColor: 'rgba(61,43,31,0.08)' }}>
-            <h3 className="font-semibold text-sm" style={{ fontFamily: 'DM Sans, sans-serif', color: '#1A1814' }}>
-              Recent Products
-            </h3>
-            <Link href="/admin/products" className="text-xs" style={{ color: '#D4820A', fontFamily: 'DM Sans, sans-serif' }}>
-              View all →
+      <div className="overflow-hidden rounded-xl border border-line bg-surface-card shadow-card">
+        <div className="flex items-center justify-between border-b border-line px-5 py-4">
+          <h3 className="text-sm font-semibold text-ink">Recently added</h3>
+          <Link href="/admin/products" className="text-sm font-medium text-accent-deep underline underline-offset-2">
+            View all
+          </Link>
+        </div>
+
+        {recent.length === 0 ? (
+          <div className="px-5 py-12 text-center">
+            <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-xl bg-accent-wash">
+              <UtensilsCrossed size={22} className="text-accent-deep" aria-hidden />
+            </div>
+            <p className="font-display text-base font-bold text-ink">No products yet</p>
+            <p className="mx-auto mt-1 max-w-xs text-sm text-ink-muted">
+              Add your first dish and it will appear on your menu straight away.
+            </p>
+            <Link href="/admin/products" className="btn btn-primary mt-4">
+              Add a product
             </Link>
           </div>
-          <div className="divide-y" style={{ borderColor: 'rgba(61,43,31,0.06)' }}>
-            {recentProducts.map((p) => (
-              <div key={p.id} className="flex items-center gap-3 px-5 py-3">
-                <div className="relative w-10 h-10 rounded-lg overflow-hidden flex-shrink-0" style={{ background: '#F4F1ED' }}>
-                  {p.image_url ? (
-                    <Image src={p.image_url} alt={p.name} fill className="object-cover" />
+        ) : (
+          <ul className="divide-y divide-line">
+            {recent.map((product) => (
+              <li key={product.id} className="flex items-center gap-3 px-5 py-3">
+                <div className="relative h-10 w-10 shrink-0 overflow-hidden rounded-lg bg-surface-sunken">
+                  {product.image_url ? (
+                    <Image
+                      src={product.image_url}
+                      alt=""
+                      fill
+                      sizes="40px"
+                      className="object-cover"
+                    />
                   ) : (
-                    <div className="w-full h-full flex items-center justify-center">
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#C8BEB5" strokeWidth="2">
-                        <rect x="3" y="3" width="18" height="18" rx="2" />
-                        <circle cx="8.5" cy="8.5" r="1.5" />
-                        <path d="M21 15l-5-5L5 21" />
-                      </svg>
-                    </div>
+                    <span className="flex h-full w-full items-center justify-center">
+                      <ImageOff size={16} className="text-ink-muted" aria-hidden />
+                    </span>
                   )}
                 </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium truncate" style={{ color: '#1A1814', fontFamily: 'DM Sans, sans-serif' }}>
-                    {p.name}
-                  </p>
-                </div>
+                <p className="min-w-0 flex-1 truncate text-sm font-medium text-ink">
+                  {product.name}
+                </p>
                 <span
-                  className="text-xs px-2.5 py-1 rounded-full flex-shrink-0"
-                  style={{
-                    background: p.active ? 'rgba(107,124,94,0.12)' : 'rgba(193,75,30,0.1)',
-                    color: p.active ? '#6B7C5E' : '#C14B1E',
-                    fontFamily: 'DM Sans, sans-serif',
-                  }}
+                  className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-medium ${
+                    product.active
+                      ? 'bg-positive-wash text-positive'
+                      : 'bg-critical-wash text-critical'
+                  }`}
                 >
-                  {p.active ? 'Active' : 'Inactive'}
+                  {product.active ? 'Live' : 'Hidden'}
                 </span>
-              </div>
+              </li>
             ))}
-          </div>
-        </div>
-      )}
+          </ul>
+        )}
+      </div>
     </div>
   )
 }
 
 export default function DashboardPage() {
   return (
-    <AuthProvider>
-      <ProtectedRoute>
-        <AdminLayout title="Dashboard">
-          <DashboardContent />
-        </AdminLayout>
-      </ProtectedRoute>
-    </AuthProvider>
+    <ProtectedRoute>
+      <AdminLayout title="Dashboard">
+        <DashboardContent />
+      </AdminLayout>
+    </ProtectedRoute>
   )
 }

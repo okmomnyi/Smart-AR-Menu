@@ -1,49 +1,68 @@
 import { Request, Response, NextFunction } from 'express'
-import { auth } from '../lib/firebase'
+import { verifyAccessToken } from '../lib/jwt'
+import { unauthorized, forbidden } from '../lib/http-error'
+import { env } from '../lib/env'
 
 export interface AuthenticatedUser {
-  uid: string
-  email: string
-}
-
-export interface TenantInfo {
   id: string
+  email: string
   role: string
+  restaurantId: string
 }
 
 declare global {
+  // eslint-disable-next-line @typescript-eslint/no-namespace
   namespace Express {
     interface Request {
       user?: AuthenticatedUser
-      restaurant?: TenantInfo
     }
   }
 }
 
-export async function verifyToken(
-  req: Request,
-  res: Response,
-  next: NextFunction
-): Promise<void> {
-  if (!auth) {
-    res.status(503).json({
-      error: 'Firebase Auth is not configured. Set FIREBASE_PROJECT_ID, FIREBASE_PRIVATE_KEY, and FIREBASE_CLIENT_EMAIL.',
-    })
+/**
+ * Verifies the short-lived access token. Stateless by design: no database
+ * round-trip on the hot path. Revocation is handled at refresh time via
+ * User.token_version.
+ */
+export function requireAuth(req: Request, _res: Response, next: NextFunction): void {
+  const header = req.headers.authorization
+  if (!header || !header.startsWith('Bearer ')) {
+    next(unauthorized('Missing or malformed Authorization header'))
     return
   }
 
-  const authHeader = req.headers.authorization
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    res.status(401).json({ error: 'Missing or invalid Authorization header' })
+  const claims = verifyAccessToken(header.slice('Bearer '.length).trim())
+  if (!claims) {
+    next(unauthorized('Invalid or expired token'))
     return
   }
 
-  const token = authHeader.split('Bearer ')[1]
-  try {
-    const decoded = await auth.verifyIdToken(token)
-    req.user = { uid: decoded.uid, email: decoded.email ?? '' }
+  req.user = {
+    id: claims.sub,
+    email: claims.email,
+    role: claims.role,
+    restaurantId: claims.rid,
+  }
+  next()
+}
+
+/**
+ * Blocks cross-site form posts against cookie-authenticated endpoints. The
+ * refresh cookie is SameSite=None in production, so an Origin check is what
+ * stands between a third-party page and a silent token rotation.
+ */
+export function requireSameOrigin(req: Request, _res: Response, next: NextFunction): void {
+  const origin = req.headers.origin
+  // Non-browser clients (curl, server-to-server) send no Origin and carry no
+  // ambient cookies, so there is nothing to forge.
+  if (!origin) {
     next()
-  } catch {
-    res.status(401).json({ error: 'Invalid or expired token' })
+    return
   }
+  const allowed = [env.FRONTEND_URL, ...env.ALLOWED_ORIGINS, 'http://localhost:3000']
+  if (!allowed.includes(origin.replace(/\/$/, ''))) {
+    next(forbidden('Cross-origin request rejected'))
+    return
+  }
+  next()
 }

@@ -1,0 +1,113 @@
+# Production stack for a single server behind a Cloudflare Tunnel.
+#
+# Images are built for arm64 by .github/workflows/images.yml and pulled here,
+# never built on the server: the frontend build needs more CPU and memory than
+# a small shared instance should give up while other services are running.
+#
+#   docker compose -f docker-compose.prod.yml --env-file .env pull
+#   docker compose -f docker-compose.prod.yml --env-file .env up -d
+#
+# The tunnel sends https://<APP_HOST>/api/* to 127.0.0.1:4000 and everything
+# else to 127.0.0.1:3000. Nothing is published beyond loopback.
+
+name: ar-menu
+
+x-limits: &limits
+  restart: unless-stopped
+  logging:
+    driver: json-file
+    options:
+      max-size: '10m'
+      max-file: '3'
+
+services:
+  # Optional. Production uses Neon (DATABASE_URL in .env). To run the database
+  # on this server instead, remove the two database URLs from .env and set
+  # COMPOSE_PROFILES=local-db there.
+  postgres:
+    <<: *limits
+    profiles: [local-db]
+    image: postgres:16-alpine
+    container_name: ar_menu_postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-ar_menu}
+      # Kept required even when the local-db profile is off, so turning it on
+      # can never start a database with a guessable password.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-ar_menu}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-ar_menu} -d ${POSTGRES_DB:-ar_menu}']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    # The server is shared with other stacks; cap what this one can take.
+    mem_limit: 512m
+
+  backend:
+    <<: *limits
+    image: ghcr.io/okmomnyi/ar-menu-backend:${IMAGE_TAG:?set IMAGE_TAG in .env}
+    container_name: ar_menu_backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+        # Only waited on when the local-db profile is active.
+        required: false
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      # Neon: the pooled endpoint serves the app; migrations need the direct
+      # endpoint (same host without -pooler). Both fall back to the local
+      # container when unset.
+      DATABASE_URL: ${DATABASE_URL:-postgresql://${POSTGRES_USER:-ar_menu}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-ar_menu}}
+      DIRECT_DATABASE_URL: ${DIRECT_DATABASE_URL:-postgresql://${POSTGRES_USER:-ar_menu}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-ar_menu}}
+      FRONTEND_URL: https://${APP_HOST:?set APP_HOST in .env}
+      API_PATH_PREFIX: /api
+      # cloudflared is the one hop in front of the API.
+      TRUST_PROXY_HOPS: 1
+      ACCESS_TOKEN_SECRET: ${ACCESS_TOKEN_SECRET:?set ACCESS_TOKEN_SECRET in .env}
+      REFRESH_TOKEN_SECRET: ${REFRESH_TOKEN_SECRET:?set REFRESH_TOKEN_SECRET in .env}
+      ACCESS_TOKEN_TTL: ${ACCESS_TOKEN_TTL:-15m}
+      REFRESH_TOKEN_TTL_DAYS: ${REFRESH_TOKEN_TTL_DAYS:-30}
+      ALLOW_REGISTRATION: ${ALLOW_REGISTRATION:-true}
+      R2_ACCOUNT_ID: ${R2_ACCOUNT_ID:-}
+      R2_ACCESS_KEY_ID: ${R2_ACCESS_KEY_ID:-}
+      R2_SECRET_ACCESS_KEY: ${R2_SECRET_ACCESS_KEY:-}
+      R2_BUCKET_NAME: ${R2_BUCKET_NAME:-}
+      R2_PUBLIC_URL: ${R2_PUBLIC_URL:-}
+      STORAGE_QUOTA_BYTES: ${STORAGE_QUOTA_BYTES:-2147483648}
+    ports:
+      - '127.0.0.1:4000:4000'
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -qO- http://127.0.0.1:4000/health || exit 1']
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+    mem_limit: 512m
+
+  frontend:
+    <<: *limits
+    # Public URLs are baked in when this image is built; see the workflow.
+    image: ghcr.io/okmomnyi/ar-menu-frontend:${IMAGE_TAG:?set IMAGE_TAG in .env}
+    container_name: ar_menu_frontend
+    depends_on:
+      backend:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      # Server-side rendering reaches the API over the compose network.
+      API_INTERNAL_URL: http://backend:4000
+    ports:
+      - '127.0.0.1:3000:3000'
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -qO- http://127.0.0.1:3000/help >/dev/null || exit 1']
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    mem_limit: 512m
+
+volumes:
+  postgres_data:
