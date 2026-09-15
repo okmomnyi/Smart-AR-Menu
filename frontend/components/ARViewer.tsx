@@ -73,6 +73,9 @@ function disposeObject(root: THREE.Object3D): void {
 export default function ARViewer({ product, slug }: ARViewerProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const overlayRef = useRef<HTMLDivElement>(null)
+  // The details sheet over the bottom of the canvas, measured so the dish is
+  // framed in the part of the screen the sheet leaves visible.
+  const sheetRef = useRef<HTMLDivElement>(null)
 
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null)
   const sceneRef = useRef<THREE.Scene | null>(null)
@@ -315,10 +318,19 @@ export default function ARViewer({ product, slug }: ARViewerProps) {
       const width = canvas.clientWidth
       const height = Math.max(canvas.clientHeight, 1)
       camera.aspect = width / height
+      // The details sheet covers the bottom of the canvas and grows with size
+      // buttons, long descriptions and error messages. Drawn at the centre of
+      // the full canvas, the dish ended up hidden behind it on phones. Shift
+      // the view down by half the covered height so the dish sits in the middle
+      // of what is still visible. Capped so a very tall sheet cannot push the
+      // dish off the top.
+      const covered = Math.min(sheetRef.current?.offsetHeight ?? 0, height * 0.6)
+      camera.setViewOffset(width, height, 0, covered / 2, width, height)
       camera.updateProjectionMatrix()
       renderer.setSize(width, height, false)
     })
     resize.observe(canvas)
+    if (sheetRef.current) resize.observe(sheetRef.current)
 
     return () => {
       disposed = true
@@ -628,7 +640,10 @@ export default function ARViewer({ product, slug }: ARViewerProps) {
           </p>
         )}
 
-        <div className="absolute inset-x-0 bottom-0 z-20 rounded-t-3xl border-t border-menu-border bg-menu-bg/92 px-6 pb-8 pt-5 backdrop-blur-xl">
+        <div
+          ref={sheetRef}
+          className="absolute inset-x-0 bottom-0 z-20 rounded-t-3xl border-t border-menu-border bg-menu-bg/92 px-6 pb-8 pt-5 backdrop-blur-xl"
+        >
           <div className="mx-auto mb-4 h-1 w-10 rounded-full bg-white/20" aria-hidden />
 
           <h1 className="font-display text-xl font-bold text-menu-ink">{product.name}</h1>
