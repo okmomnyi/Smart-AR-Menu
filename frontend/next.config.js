@@ -9,6 +9,9 @@ const remotePatterns = [
   { protocol: 'https', hostname: '**.r2.dev' },
   { protocol: 'https', hostname: 'images.unsplash.com' },
   { protocol: 'https', hostname: 'plus.unsplash.com' },
+  // Wikimedia Commons, for openly licensed photos. Commons paths only.
+  { protocol: 'https', hostname: 'thumb.wikimedia.org', pathname: '/wikipedia/commons/**' },
+  { protocol: 'https', hostname: 'upload.wikimedia.org', pathname: '/wikipedia/commons/**' },
 ]
 
 if (mediaHostname) {

@@ -4,17 +4,27 @@ import React, { useEffect, useState } from 'react'
 import { ArrowUp } from 'lucide-react'
 
 /**
- * Appears once the reader is well down a long page. On a phone, a full menu
- * pushes the category tabs a long thumb-scroll away.
+ * Appears once the reader is well down a long page and starts heading back up.
+ * On a phone, a full menu pushes the category tabs a long thumb-scroll away.
+ *
+ * It stays hidden while scrolling down. That is when someone is reading, and a
+ * button parked in the bottom-right corner sat on top of the "View at real
+ * size" button of whichever card was passing underneath it.
  */
 export default function BackToTop() {
   const [visible, setVisible] = useState(false)
 
   useEffect(() => {
     let frame = 0
+    let lastY = window.scrollY
     const check = () => {
       frame = 0
-      setVisible(window.scrollY > window.innerHeight * 1.5)
+      const y = window.scrollY
+      // A few pixels of slack so momentum scrolling does not flicker it.
+      if (y <= window.innerHeight * 1.5) setVisible(false)
+      else if (y < lastY - 4) setVisible(true)
+      else if (y > lastY + 4) setVisible(false)
+      lastY = y
     }
     const schedule = () => {
       if (!frame) frame = window.requestAnimationFrame(check)
