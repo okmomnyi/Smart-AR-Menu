@@ -224,12 +224,16 @@ subdomain, no CORS, and the refresh cookie is same-site.
 | Piece | Where |
 |---|---|
 | Images | Built for arm64 by `.github/workflows/images.yml` and pushed to GHCR |
-| Stack | `deploy/docker-compose.prod.yml`, run from `/opt/ar-menu` on the server |
+| Server | `ubuntu@130.61.99.208`, Oracle ARM, Ubuntu 26.04 |
+| Stack | `deploy/docker-compose.prod.yml`, run from `/opt/ar-menu` |
 | Secrets | `/opt/ar-menu/.env` on the server only, from `deploy/.env.example` |
-| HTTPS | The existing `cloudflared-lfr` tunnel, config in `~/.cloudflared/config.yml` |
+| Database | Neon, eu-central-1 (Frankfurt) |
+| HTTPS | Dedicated `ar-menu` Cloudflare Tunnel, service `cloudflared-ar-menu`, config in `~/.cloudflared/config.yml` |
 
-The server never builds images. It is a single-core instance shared with other
-services, and a Next.js build would starve them.
+The server never builds images: it is a single-core instance, and a Next.js
+build would take it over for many minutes. Ports 3000 and 4000 are bound to
+loopback, and Oracle's host firewall admits only SSH, so the tunnel is the only
+way in.
 
 To release a commit:
 
